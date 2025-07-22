@@ -44,14 +44,14 @@ This project downloads and processes VEX (Vulnerability Exploitability eXchange)
 
 1. **Install dependencies**:
    ```bash
-   pip install vex-reader sqlalchemy
+   pip install -r requirements.txt
    ```
 
 2. **Create virtual environment** (recommended):
    ```bash
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   pip install vex-reader sqlalchemy
+   pip install -r requirements.txt
    ```
 
 3. **Initialize database**:
@@ -220,9 +220,39 @@ The script includes robust error handling:
 - **Missing fields** are handled gracefully with NULL values
 - **Batch processing** continues even if individual files fail
 
+## Querying the Database
+
+### Component Query Script
+
+Use `query-vex.py` to search for CVEs affecting specific components:
+
+```bash
+# Search for all CVEs affecting mysql component
+python query-vex.py --component mysql
+
+# Search for kernel CVEs from 2024
+python query-vex.py --component kernel --year 2024
+
+# Get only the count of results
+python query-vex.py --component kernel --count-only
+
+# Export results as JSON
+python query-vex.py --component mysql --format json > mysql-cves.json
+```
+
+#### Output Format
+The script displays results grouped by product and ordered by state, showing:
+- ✅ **Fixed CVEs** with errata information
+- ❌ **Affected CVEs** 
+- ⚪ **Not Affected CVEs**
+- ⚠️ **Won't Fix CVEs** with reasons
+- CVE ID, CVSS score, severity, and publication date
+- Complete component lists for each CVE
+
 ## Project Structure
 
 - `import-vex.py` - Main import script with CLI interface
+- `query-vex.py` - Query script for searching CVEs
 - `vex-db.sql` - Database schema definition
 - `vex.db` - SQLite database file (created after first run)
 - `cve-2022-48632.json` - Example VEX data file
