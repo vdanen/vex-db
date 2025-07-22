@@ -214,7 +214,12 @@ Examples:
                 writer = csv.DictWriter(output, fieldnames=results[0].keys())
                 writer.writeheader()
                 for row in results:
-                    writer.writerow(dict(row))
+                    # Convert row to dict and modify components field for CSV
+                    row_dict = dict(row)
+                    if row_dict['components'] and ',' in row_dict['components']:
+                        # Replace commas with spaces for CSV output only
+                        row_dict['components'] = row_dict['components'].replace(',', ' ')
+                    writer.writerow(row_dict)
             print(output.getvalue())
         else:
             format_output(results, args.component, args.exact)
