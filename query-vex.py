@@ -39,7 +39,7 @@ def build_query(component, year=None, exact=False, product=None):
     """
     
     if exact:
-        params = [f"{component}-%"]
+        params = [f"{component}%"]
     else:
         params = [f"%{component}%"]
     
