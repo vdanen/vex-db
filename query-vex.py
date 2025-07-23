@@ -51,7 +51,7 @@ def build_query(component, year=None, exact=False, product=None):
         base_query += " AND a.product LIKE ?"
         params.append(f"%{product}%")
 
-    base_query += " ORDER BY a.product DESC, a.state"
+    base_query += " ORDER BY a.cve DESC, a.product DESC, a.state"
     
     return base_query, params
 
