@@ -20,12 +20,14 @@ def connect_to_database(db_path="vex.db"):
         print(f"❌ Error connecting to database: {e}")
         sys.exit(1)
 
-def build_query(component, year=None, exact=False, product=None):
+def build_query(component, year=None, exact=False, product=None, cpe=None, purl=None):
     """Build SQL query based on parameters"""
     base_query = """
     SELECT 
         a.cve,
         a.product,
+        a.cpe,
+        a.purl,
         a.state,
         a.reason,
         a.errata,
@@ -50,6 +52,14 @@ def build_query(component, year=None, exact=False, product=None):
     if product:
         base_query += " AND a.product LIKE ?"
         params.append(f"%{product}%")
+
+    if cpe:
+        base_query += " AND a.cpe LIKE ?"
+        params.append(f"%{cpe}%")
+
+    if purl:
+        base_query += " AND a.purl LIKE ?"
+        params.append(f"%{purl}%")
 
     base_query += " ORDER BY a.cve DESC, a.product DESC, a.state"
     
@@ -160,6 +170,15 @@ Examples:
     )
 
     parser.add_argument(
+        '--cpe',
+        help='Filter results by CPE (supports partial matches)'
+    )
+    parser.add_argument(
+        '--purl',
+        help='Filter results by PURL (supports partial matches)'
+    )
+
+    parser.add_argument(
         '--database', '-d',
         default='vex.db',
         help='Path to VEX database file (default: vex.db)'
@@ -209,18 +228,32 @@ Examples:
         print(f"❌ Invalid year: {args.year}. Please use a reasonable year (1999-2030)")
         sys.exit(1)
     
+    # Validate that only one of --product, --cpe, or --purl is used
+    filter_args = [args.product, args.cpe, args.purl]
+    filter_names = ['--product', '--cpe', '--purl']
+    active_filters = [name for name, arg in zip(filter_names, filter_args) if arg is not None]
+
+    if len(active_filters) > 1:
+        print(f"❌ Error: Only one filter can be used at a time. You specified: {', '.join(active_filters)}")
+        print("Please use only one of --product, --cpe, or --purl.")
+        sys.exit(1)
+
     # Connect to database
     conn = connect_to_database(args.database)
     
     try:
         # Build and execute query
-        query, params = build_query(args.component, args.year, args.exact, args.product)
+        query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl)
         
         print(f"🔎 Searching for component: '{args.component}'")
         if args.year:
             print(f"📅 Year filter: {args.year}")
         if args.product:
             print(f"📦 Product filter: '{args.product}'")
+        if args.cpe:
+            print(f"📦 CPE filter: '{args.cpe}'")
+        if args.purl:
+            print(f"📦 PURL filter: '{args.purl}'")
         print(f"🗄️  Database: {args.database}")
         print()
         
