@@ -174,7 +174,10 @@ def format_output(results, component, exact=False):
                     # Show all components when no component filter is specified
                     components_list = c
 
-            print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {', '.join(components_list)}")
+            cmps = ', '.join(components_list)
+            if len(cmps) > 100:
+                cmps = cmps[:100] + '...'
+            print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cmps}")
         print()
 
 
