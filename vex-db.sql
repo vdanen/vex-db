@@ -16,6 +16,8 @@ DROP TABLE IF EXISTS `affects`;
 CREATE TABLE `affects` (
     `cve` VARCHAR(18),
     `product` TEXT,
+    `cpe` TEXT,
+    `purl` TEXT,
     `errata` TEXT,
     `release_date` TEXT,
     `state` TEXT,

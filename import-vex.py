@@ -21,11 +21,13 @@ DEFAULT_DATABASE_URL = "sqlite:///vex.db"
 engine = None
 SessionLocal = None
 
+
 def initialize_database(database_url=DEFAULT_DATABASE_URL):
     """Initialize database connection"""
     global engine, SessionLocal
     engine = create_engine(database_url)
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 def insert_vex_data(vex_obj, packages):
     """Insert VEX data into the database"""
@@ -95,18 +97,19 @@ def insert_vex_data(vex_obj, packages):
         # handle fixes first
         if hasattr(packages, 'fixes') and packages.fixes:
             for fix in packages.fixes:
-                print(f'DEBUG: {fix}')
                 status_type = 'fixed'
 
                 affects_insert = text("""
                     INSERT INTO affects 
-                    (cve, product, errata, release_date, state, components)
-                    VALUES (:cve, :product, :errata, :release_date, :state, :components)
+                    (cve, product, cpe, purl, errata, release_date, state, components)
+                    VALUES (:cve, :product, :cpe, :purl, :errata, :release_date, :state, :components)
                 """)
                 
                 session.execute(affects_insert, {
                     'cve': cve_id,
                     'product': fix.product,
+                    'cpe': fix.cpe,
+                    'purl': fix.purl,
                     'errata': fix.id,
                     'release_date': fix.date,
                     'state': 'fixed',
@@ -121,13 +124,15 @@ def insert_vex_data(vex_obj, packages):
 
                 affects_insert = text("""
                     INSERT INTO affects 
-                    (cve, product, reason, state, components)
-                    VALUES (:cve, :product, :reason, :state, :components)
+                    (cve, product, cpe, purl, reason, state, components)
+                    VALUES (:cve, :product, :cpe, :purl, :reason, :state, :components)
                 """)
 
                 session.execute(affects_insert, {
                     'cve': cve_id,
                     'product': wontfix.product,
+                    'cpe': wontfix.cpe,
+                    'purl': wontfix.purl,
                     'reason': wontfix.reason,
                     'state': 'wontfix',
                     'components': wontfix.component
@@ -141,13 +146,15 @@ def insert_vex_data(vex_obj, packages):
 
                 affects_insert = text("""
                     INSERT INTO affects 
-                    (cve, product, state, components)
-                    VALUES (:cve, :product, :state, :components)
+                    (cve, product, cpe, purl, state, components)
+                    VALUES (:cve, :product, :cpe, :purl, :state, :components)
                 """)
 
                 session.execute(affects_insert, {
                     'cve': cve_id,
                     'product': not_affected.product,
+                    'cpe': not_affected.cpe,
+                    'purl': not_affected.purl,
                     'state': 'not_affected',
                     'components': ','.join(not_affected.components)
                 })
@@ -160,13 +167,15 @@ def insert_vex_data(vex_obj, packages):
 
                 affects_insert = text("""
                     INSERT INTO affects 
-                    (cve, product, state, components)
-                    VALUES (:cve, :product, :state, :components)
+                    (cve, product, cpe, purl, state, components)
+                    VALUES (:cve, :product, :cpe, :purl, :state, :components)
                 """)
 
                 session.execute(affects_insert, {
                     'cve': cve_id,
                     'product': affected.product,
+                    'cpe': affected.cpe,
+                    'purl': affected.purl,
                     'state': 'affected',
                     'components': ','.join(affected.components)
                 })
@@ -182,6 +191,7 @@ def insert_vex_data(vex_obj, packages):
         return False
     finally:
         session.close()
+
 
 def process_vex_file(file_path):
     """Process a single VEX file"""
@@ -214,6 +224,7 @@ def process_vex_file(file_path):
         print(f"Error processing file {file_path}: {e}")
         return False
 
+
 def find_vex_files(path):
     """Find all VEX files in a directory (recursively)"""
     vex_files = []
@@ -240,6 +251,7 @@ def find_vex_files(path):
     else:
         print(f"Error: {path} does not exist or is not accessible")
         return []
+
 
 def main():
     parser = argparse.ArgumentParser(

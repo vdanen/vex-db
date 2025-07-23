@@ -1,2 +1,2 @@
 SQLAlchemy==2.0.41
-vex-reader==0.9.3
+vex-reader==0.9.4
