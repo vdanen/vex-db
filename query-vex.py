@@ -20,7 +20,7 @@ def connect_to_database(db_path="vex.db"):
         print(f"❌ Error connecting to database: {e}")
         sys.exit(1)
 
-def build_query(component, year=None, exact=False, product=None, cpe=None, purl=None):
+def build_query(component=None, year=None, exact=False, product=None, cpe=None, purl=None):
     """Build SQL query based on parameters"""
     base_query = """
     SELECT 
@@ -37,29 +37,52 @@ def build_query(component, year=None, exact=False, product=None, cpe=None, purl=
         c.severity
     FROM affects a
     LEFT JOIN cve c ON a.cve = c.cve
-    WHERE a.components LIKE ?
     """
     
-    if exact:
-        params = [f"{component}%"]
-    else:
-        params = [f"%{component}%"]
+    params = []
+    where_conditions = []
+
+    # Add component filter if provided
+    if component:
+        if exact:
+            where_conditions.append("a.components LIKE ?")
+            params.append(f"{component}%")
+        else:
+            where_conditions.append("a.components LIKE ?")
+            params.append(f"%{component}%")
     
+    # Add other filters
     if year:
-        base_query += " AND c.public_date LIKE ?"
+        where_conditions.append("c.public_date LIKE ?")
         params.append(f"{year}%")
     
     if product:
-        base_query += " AND a.product LIKE ?"
-        params.append(f"%{product}%")
+        if exact:
+            where_conditions.append("a.product LIKE ?")
+            params.append(f"{product}")
+        else:
+            where_conditions.append("a.product LIKE ?")
+            params.append(f"%{product}%")
 
     if cpe:
-        base_query += " AND a.cpe LIKE ?"
-        params.append(f"%{cpe}%")
+        if exact:
+            where_conditions.append("a.cpe LIKE ?")
+            params.append(f"{cpe}")
+        else:
+            where_conditions.append("a.cpe LIKE ?")
+            params.append(f"%{cpe}%")
 
     if purl:
-        base_query += " AND a.purl LIKE ?"
-        params.append(f"%{purl}%")
+        if exact:
+            where_conditions.append("a.purl LIKE ?")
+            params.append(f"{purl}")
+        else:
+            where_conditions.append("a.purl LIKE ?")
+            params.append(f"%{purl}%")
+
+    # Add WHERE clause if any conditions exist
+    if where_conditions:
+        base_query += " WHERE " + " AND ".join(where_conditions)
 
     base_query += " ORDER BY a.cve DESC, a.product DESC, a.state"
     
@@ -68,7 +91,10 @@ def build_query(component, year=None, exact=False, product=None, cpe=None, purl=
 def format_output(results, component, exact=False):
     """Format query results for display"""
     if not results:
-        print(f"🔍 No CVEs found affecting component '{component}'")
+        if component:
+            print(f"🔍 No CVEs found affecting component '{component}'")
+        else:
+            print(f"🔍 No CVEs found matching the specified criteria")
         return
     
     # Group by product for better display
@@ -86,10 +112,14 @@ def format_output(results, component, exact=False):
     total_cves = len(results)
     unique_cves = len(set(row['cve'] for row in results))
     
-    if exact:
-        print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (exact match)")
+    # Display results summary
+    if component:
+        if exact:
+            print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (exact match)")
+        else:
+            print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (fuzzy match)")
     else:
-        print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (fuzzy match)")
+        print(f"🔍 Found {total_cves} entries matching criteria ({unique_cves} unique CVEs)")
 
     print("=" * 80)
     
@@ -135,9 +165,14 @@ def format_output(results, component, exact=False):
             components_list = []
             if components:
                 c = components.split(',')
-                for x in c:
-                    if component in x:
-                        components_list.append(x)
+                if component:
+                    # Filter components to show only those matching the search term
+                    for x in c:
+                        if component in x:
+                            components_list.append(x)
+                else:
+                    # Show all components when no component filter is specified
+                    components_list = c
 
             print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {', '.join(components_list)}")
         print()
@@ -145,11 +180,13 @@ def format_output(results, component, exact=False):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Query VEX database for CVEs affecting specific components",
+        description="Query VEX database for CVEs affecting specific components, products, or other criteria",
         epilog="""
 Examples:
   %(prog)s --component mysql                    # Find all CVEs affecting mysql component
   %(prog)s --component kernel --year 2024       # Find kernel CVEs from 2024
+  %(prog)s --product "Red Hat Enterprise Linux" # Find all CVEs for a product
+  %(prog)s --year 2024                          # Find all CVEs from 2024
   %(prog)s --component openssl --product "Red Hat Enterprise Linux"  # Filter by product
   %(prog)s --component kernel --product RHEL --year 2024  # Multiple filters
   %(prog)s --component openssl --database custom.db  # Use custom database file
@@ -160,7 +197,7 @@ Examples:
     parser.add_argument(
         '--component', '-x',
         dest='component',
-        help='Component name to search for (supports partial matches)'
+        help='Component name to search for (supports partial matches, optional)'
     )
     
     parser.add_argument(
@@ -205,7 +242,7 @@ Examples:
     parser.add_argument(
         '--exact', '-e',
         action='store_true',
-        help='Do an exact match on the component name; defaults to fuzzy match'
+        help='Do an exact filter match (works with components, products, cpes and purls); defaults to fuzzy match'
     )
 
     parser.add_argument(
@@ -243,6 +280,13 @@ Examples:
         print("Please use only one of --product, --cpe, or --purl.")
         sys.exit(1)
 
+    # Validate that at least one filter is provided
+    all_filters = [args.component, args.product, args.cpe, args.purl, args.year]
+    if not any(all_filters):
+        print("❌ Error: At least one filter must be specified.")
+        print("Use --component, --product, --cpe, --purl, or --year to filter results.")
+        sys.exit(1)
+
     # Connect to database
     conn = connect_to_database(args.database)
     
@@ -250,15 +294,20 @@ Examples:
         # Build and execute query
         query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl)
         
-        print(f"🔎 Searching for component: '{args.component}'")
+        # Display search criteria
+        search_criteria = []
+        if args.component:
+            search_criteria.append(f"component: '{args.component}'")
         if args.year:
-            print(f"📅 Year filter: {args.year}")
+            search_criteria.append(f"year: {args.year}")
         if args.product:
-            print(f"📦 Product filter: '{args.product}'")
+            search_criteria.append(f"product: '{args.product}'")
         if args.cpe:
-            print(f"📦 CPE filter: '{args.cpe}'")
+            search_criteria.append(f"CPE: '{args.cpe}'")
         if args.purl:
-            print(f"📦 PURL filter: '{args.purl}'")
+            search_criteria.append(f"PURL: '{args.purl}'")
+
+        print(f"🔎 Searching with filters: {', '.join(search_criteria)}")
         print(f"🗄️  Database: {args.database}")
         print()
         

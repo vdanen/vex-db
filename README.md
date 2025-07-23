@@ -239,6 +239,15 @@ Use `query-vex.py` to search for CVEs affecting specific components:
   # Multiple filters combined
   python query-vex.py --component kernel --product RHEL --year 2024
 
+  # Query all CVEs for a product (no component required)
+  python query-vex.py --product "Red Hat Enterprise Linux 9"
+
+  # Query all CVEs from a specific year (no component required)
+  python query-vex.py --year 2024
+
+  # Combine product and year filters without component
+  python query-vex.py --product "Red Hat Enterprise Linux 9" --year 2024
+
   # Get only the count of results
   python query-vex.py --component kernel --count-only
 
@@ -247,12 +256,14 @@ Use `query-vex.py` to search for CVEs affecting specific components:
   ```
 
   #### Query Options
-  - `--component` (required): Component name to search for (supports partial matching)
+  - `--component` (optional): Component name to search for (supports partial matching)
   - `--year`: Filter by publication year (e.g., 2024)
   - `--product`: Filter by product name (supports partial matching)
   - `--exact`: Use exact component matching instead of fuzzy matching
   - `--format`: Output format (table, json, csv)
   - `--count-only`: Show only result counts
+
+  **Note**: At least one filter (`--component`, `--product`, `--cpe`, `--purl`, or `--year`) must be specified.
 
   #### Output Format
   The script displays results grouped by product and ordered by state, showing:
