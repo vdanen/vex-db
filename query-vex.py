@@ -183,9 +183,27 @@ Examples:
         action='store_true',
         help='Do an exact match on the component name; defaults to fuzzy match'
     )
+
+    parser.add_argument(
+        '--list-cpes',
+        action='store_true',
+        help='List all known CPEs'
+    )
     
     args = parser.parse_args()
     
+    # listing CPEs is a one-off
+    if args.list_cpes:
+        conn = connect_to_database(args.database)
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT cpe, product FROM affects ORDER BY product")
+        results = cursor.fetchall()
+        print(f"🔍 Listing {len(results)} unique CPEs in the database")
+        print("-" * 80)
+        for row in results:
+            print(f"{row['product']} ==> {row['cpe']}")
+        sys.exit(0)
+
     # Validate year
     if args.year and (args.year < 1999 or args.year > 2030):
         print(f"❌ Invalid year: {args.year}. Please use a reasonable year (1999-2030)")
