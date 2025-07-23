@@ -1,0 +1,45 @@
+header:
+  schema-version: 2.0.0
+  last-updated: '2025-07-23'
+  last-reviewed: '2025-07-23'
+  url: https://github.com/vdanen/vex-db
+  comment: |
+    This file contains the minimum information for both project and repository.
+    It not required to include both a project and repository section if the project
+    section is intended to be inherited by repositories via header.project-si-source
+
+project:
+  name: vex-db
+  administrators:
+    - name: Vincent Danen
+      social: https://x.com/vdanen
+      primary: true
+  repositories:
+    - name: vex-db
+      url: https://github.com/vdanen/vex-db
+      comment: |
+        vex-db is a set of scripts to create and query a populated VEX database
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    comment: |
+      Any vulnerabilities can be reported in GitHub issues
+
+repository:
+  url: https://github.com/vdanen/vex-db
+  status: active
+  accepts-change-request: true
+  accepts-automated-change-request: false
+  core-team:
+    - name:        Vincent Danen
+      social:      https://x.com/vdanen
+      primary:     true
+  license:
+    url: https://github.com/vdanen/vex-db/blob/main/LICENSE
+    expression: GPL-3.0-or-later
+  release:
+    changelog: https://github.com/vdanen/vex-db/releases
+    automated-pipeline: false
+    distribution-points:
+      - uri:  https://github.com/vdanen/vex-db/releases
+        comment: GitHub Release Page
