@@ -226,28 +226,42 @@ The script includes robust error handling:
 
 Use `query-vex.py` to search for CVEs affecting specific components:
 
-```bash
-# Search for all CVEs affecting mysql component
-python query-vex.py --component mysql
+  ```bash
+  # Search for all CVEs affecting mysql component
+  python query-vex.py --component mysql
 
-# Search for kernel CVEs from 2024
-python query-vex.py --component kernel --year 2024
+  # Search for kernel CVEs from 2024
+  python query-vex.py --component kernel --year 2024
 
-# Get only the count of results
-python query-vex.py --component kernel --count-only
+  # Filter by product and component
+  python query-vex.py --component mysql --product "Red Hat Enterprise Linux"
 
-# Export results as JSON
-python query-vex.py --component mysql --format json > mysql-cves.json
-```
+  # Multiple filters combined
+  python query-vex.py --component kernel --product RHEL --year 2024
 
-#### Output Format
-The script displays results grouped by product and ordered by state, showing:
-- ✅ **Fixed CVEs** with errata information
-- ❌ **Affected CVEs** 
-- ⚪ **Not Affected CVEs**
-- ⚠️ **Won't Fix CVEs** with reasons
-- CVE ID, CVSS score, severity, and publication date
-- Complete component lists for each CVE
+  # Get only the count of results
+  python query-vex.py --component kernel --count-only
+
+  # Export results as JSON
+  python query-vex.py --component mysql --format json > mysql-cves.json
+  ```
+
+  #### Query Options
+  - `--component` (required): Component name to search for (supports partial matching)
+  - `--year`: Filter by publication year (e.g., 2024)
+  - `--product`: Filter by product name (supports partial matching)
+  - `--exact`: Use exact component matching instead of fuzzy matching
+  - `--format`: Output format (table, json, csv)
+  - `--count-only`: Show only result counts
+
+  #### Output Format
+  The script displays results grouped by product and ordered by state, showing:
+  - ✅ **Fixed CVEs** with errata information
+  - ❌ **Affected CVEs** 
+  - ⚪ **Not Affected CVEs**
+  - ⚠️ **Won't Fix CVEs** with reasons
+  - CVE ID, CVSS score, severity, and publication date
+  - Complete component lists for each CVE
 
 ## Project Structure
 

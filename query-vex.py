@@ -20,7 +20,7 @@ def connect_to_database(db_path="vex.db"):
         print(f"❌ Error connecting to database: {e}")
         sys.exit(1)
 
-def build_query(component, year=None, exact=False):
+def build_query(component, year=None, exact=False, product=None):
     """Build SQL query based on parameters"""
     base_query = """
     SELECT 
@@ -47,6 +47,10 @@ def build_query(component, year=None, exact=False):
         base_query += " AND c.public_date LIKE ?"
         params.append(f"{year}%")
     
+    if product:
+        base_query += " AND a.product LIKE ?"
+        params.append(f"%{product}%")
+
     base_query += " ORDER BY a.product DESC, a.state"
     
     return base_query, params
@@ -131,6 +135,8 @@ def main():
 Examples:
   %(prog)s --component mysql                    # Find all CVEs affecting mysql component
   %(prog)s --component kernel --year 2024       # Find kernel CVEs from 2024
+  %(prog)s --component openssl --product "Red Hat Enterprise Linux"  # Filter by product
+  %(prog)s --component kernel --product RHEL --year 2024  # Multiple filters
   %(prog)s --component openssl --database custom.db  # Use custom database file
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -148,6 +154,11 @@ Examples:
         help='Filter results by year (e.g., 2024)'
     )
     
+    parser.add_argument(
+        '--product', '-p',
+        help='Filter results by product name (supports partial matches)'
+    )
+
     parser.add_argument(
         '--database', '-d',
         default='vex.db',
@@ -185,11 +196,13 @@ Examples:
     
     try:
         # Build and execute query
-        query, params = build_query(args.component, args.year, args.exact)
+        query, params = build_query(args.component, args.year, args.exact, args.product)
         
         print(f"🔎 Searching for component: '{args.component}'")
         if args.year:
             print(f"📅 Year filter: {args.year}")
+        if args.product:
+            print(f"📦 Product filter: '{args.product}'")
         print(f"🗄️  Database: {args.database}")
         print()
         
