@@ -73,11 +73,15 @@ def format_output(results, component, exact=False):
     
     # Group by product for better display
     products = {}
+    cpes = {}
     for row in results:
         product = row['product'] or 'Unknown Product'
+        cpe = row['cpe'] or 'Unknown CPE'
         if product not in products:
             products[product] = []
         products[product].append(row)
+        if product not in cpes:
+            cpes[product] = cpe
     
     total_cves = len(results)
     unique_cves = len(set(row['cve'] for row in results))
@@ -90,7 +94,7 @@ def format_output(results, component, exact=False):
     print("=" * 80)
     
     for product, entries in products.items():
-        print(f"\n📦 {product}")
+        print(f"\n📦 {product} ({cpes[product]})")
         print("-" * 60)
         
         for entry in entries:
@@ -137,6 +141,7 @@ def format_output(results, component, exact=False):
 
             print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {', '.join(components_list)}")
         print()
+
 
 def main():
     parser = argparse.ArgumentParser(
