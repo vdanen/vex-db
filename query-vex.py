@@ -97,18 +97,66 @@ def format_output(results, component, exact=False):
             print(f"🔍 No CVEs found matching the specified criteria")
         return
     
-    # Group by product for better display
+    # Convert all results to dictionaries for consistent handling
+    dict_results = [dict(row) for row in results]
+
+    # Group by product, then by CVE for deduplication
     products = {}
     cpes = {}
-    for row in results:
+
+    for row in dict_results:
         product = row['product'] or 'Unknown Product'
         cpe = row['cpe'] or 'Unknown CPE'
+        cve = row['cve'] or 'N/A'
+
         if product not in products:
-            products[product] = []
-        products[product].append(row)
-        if product not in cpes:
+            products[product] = {}
             cpes[product] = cpe
-    
+
+        if cve not in products[product]:
+            products[product][cve] = []
+
+        products[product][cve].append(row)
+
+    # Normalize CVEs that have both 'affected' and 'wontfix' states
+    normalized_products = {}
+    for product, cves in products.items():
+        normalized_products[product] = []
+
+        for cve, entries in cves.items():
+            if len(entries) > 1:
+                # Check if we have both 'affected' and 'wontfix' states
+                states = [entry['state'].lower() for entry in entries if entry['state']]
+                affected_entry = None
+                wontfix_entry = None
+                other_entries = []
+
+                for entry in entries:
+                    state = entry['state'].lower() if entry['state'] else 'unknown'
+                    if state == 'affected':
+                        affected_entry = entry
+                    elif state == 'wontfix':
+                        wontfix_entry = entry
+                    else:
+                        other_entries.append(entry)
+
+                # If we have both affected and wontfix, combine them
+                if affected_entry and wontfix_entry:
+                    combined_entry = affected_entry.copy()
+                    reason = wontfix_entry['reason'] or ''
+                    combined_entry['combined_state'] = 'affected_wontfix'
+                    combined_entry['wontfix_reason'] = reason
+                    normalized_products[product].append(combined_entry)
+
+                    # Add any other entries separately
+                    normalized_products[product].extend(other_entries)
+                else:
+                    # No affected+wontfix combination, add all entries as-is
+                    normalized_products[product].extend(entries)
+            else:
+                # Single entry, add as-is
+                normalized_products[product].extend(entries)
+
     total_cves = len(results)
     unique_cves = len(set(row['cve'] for row in results))
     
@@ -123,7 +171,7 @@ def format_output(results, component, exact=False):
 
     print("=" * 80)
     
-    for product, entries in products.items():
+    for product, entries in normalized_products.items():
         print(f"\n📦 {product} ({cpes[product]})")
         print("-" * 60)
         
@@ -137,29 +185,38 @@ def format_output(results, component, exact=False):
             cvss_score = entry['cvss_score'] or 'N/A'
             severity = entry['severity'] or 'N/A'
             
-            # Format state with color indicators
-            state_icon = {
-                'fixed': '✅',
-                'affected': '❌', 
-                'not_affected': '⚪',
-                'wontfix': '⚠️'
-            }.get(state.lower(), '❓')
-
-            if state.lower() == 'fixed':
-                state_string = f"Fixed in: {errata}"
-            elif state.lower() == 'affected':
-                state_string = f"Affected"
-            elif state.lower() == 'not_affected':
-                state_string = f"Not affected"
-                if reason:
-                    state_string += f" {reason}"
-            elif state.lower() == 'wontfix':
-                state_string = f"Wontfix"
-                if reason:
-                    state_string += f": {reason}"
+            # Handle combined affected+wontfix state
+            if entry.get('combined_state') == 'affected_wontfix':
+                state_icon = '❌⚠️'  # Combined icon
+                wontfix_reason = entry.get('wontfix_reason', '')
+                if wontfix_reason:
+                    state_string = f"Affected:Wontfix: {wontfix_reason}"
+                else:
+                    state_string = f"Affected:Wontfix"
             else:
-                state_string = f"🔧 {state}"
-            
+                # Format state with color indicators (original logic)
+                state_icon = {
+                    'fixed': '✅',
+                    'affected': '❌',
+                    'not_affected': '⚪',
+                    'wontfix': '⚠️'
+                }.get(state.lower(), '❓')
+
+                if state.lower() == 'fixed':
+                    state_string = f"Fixed in: {errata}"
+                elif state.lower() == 'affected':
+                    state_string = f"Affected"
+                elif state.lower() == 'not_affected':
+                    state_string = f"Not affected"
+                    if reason:
+                        state_string += f" {reason}"
+                elif state.lower() == 'wontfix':
+                    state_string = f"Wontfix"
+                    if reason:
+                        state_string += f": {reason}"
+                else:
+                    state_string = f"🔧 {state}"
+
             cvss_string = f"CVSS: {cvss_score} ({severity})"
 
             components_list = []
