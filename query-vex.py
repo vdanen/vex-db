@@ -20,7 +20,7 @@ def connect_to_database(db_path="vex.db"):
         print(f"❌ Error connecting to database: {e}")
         sys.exit(1)
 
-def build_query(component=None, year=None, exact=False, product=None, cpe=None, purl=None):
+def build_query(component=None, year=None, exact=False, product=None, cpe=None, purl=None, severity=None):
     """Build SQL query based on parameters"""
     base_query = """
     SELECT 
@@ -79,6 +79,10 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
         else:
             where_conditions.append("a.purl LIKE ?")
             params.append(f"%{purl}%")
+
+    if severity:
+        where_conditions.append("c.severity = ?")
+        params.append(severity.capitalize())
 
     # Add WHERE clause if any conditions exist
     if where_conditions:
@@ -241,9 +245,11 @@ def format_output(results, component, exact=False):
 def main():
     parser = argparse.ArgumentParser(
         description="Query VEX database for CVEs affecting specific components, products, or other criteria",
-        epilog="""
+        epilog="""NOTE: filters do not apply to JSON or CSV output formats.
+
 Examples:
   %(prog)s --component mysql                    # Find all CVEs affecting mysql component
+  %(prog)s --component mysql --severity low     # Find all CVEs affecting mysql component with low severity
   %(prog)s --component kernel --year 2024       # Find kernel CVEs from 2024
   %(prog)s --product "Red Hat Enterprise Linux" # Find all CVEs for a product
   %(prog)s --year 2024                          # Find all CVEs from 2024
@@ -275,9 +281,15 @@ Examples:
         '--cpe',
         help='Filter results by CPE (supports partial matches)'
     )
+
     parser.add_argument(
         '--purl',
         help='Filter results by PURL (supports partial matches)'
+    )
+
+    parser.add_argument(
+        '--severity', '-s',
+        help='Filter results by severity (e.g., "critical", "high", "medium", "low")'
     )
 
     parser.add_argument(
@@ -313,6 +325,10 @@ Examples:
     
     args = parser.parse_args()
     
+    if args.severity and args.severity.capitalize() not in ["Critical", "Important", "Moderate", "Low"]:
+        print(f"❌ Invalid severity: {args.severity}. Please use one of: critical, important, moderate, low")
+        sys.exit(1)
+
     # listing CPEs is a one-off
     if args.list_cpes:
         conn = connect_to_database(args.database)
@@ -352,7 +368,7 @@ Examples:
     
     try:
         # Build and execute query
-        query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl)
+        query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl, args.severity)
         
         # Display search criteria
         search_criteria = []
