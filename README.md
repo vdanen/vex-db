@@ -233,17 +233,23 @@ Use `query-vex.py` to search for CVEs affecting specific components:
   # Search for kernel CVEs from 2024
   python query-vex.py --component kernel --year 2024
 
+  # Filter by severity (critical, important, moderate, low)
+  python query-vex.py --component mysql --severity critical
+
   # Filter by product and component
   python query-vex.py --component mysql --product "Red Hat Enterprise Linux"
 
-  # Multiple filters combined
-  python query-vex.py --component kernel --product RHEL --year 2024
+  # Multiple filters combined (component, product, year, severity)
+  python query-vex.py --component kernel --product RHEL --year 2024 --severity important
 
   # Query all CVEs for a product (no component required)
   python query-vex.py --product "Red Hat Enterprise Linux 9"
 
   # Query all CVEs from a specific year (no component required)
   python query-vex.py --year 2024
+
+  # Filter by severity and year without component
+  python query-vex.py --year 2024 --severity critical
 
   # Combine product and year filters without component
   python query-vex.py --product "Red Hat Enterprise Linux 9" --year 2024
@@ -259,11 +265,12 @@ Use `query-vex.py` to search for CVEs affecting specific components:
   - `--component` (optional): Component name to search for (supports partial matching)
   - `--year`: Filter by publication year (e.g., 2024)
   - `--product`: Filter by product name (supports partial matching)
+  - `--severity`: Filter by vulnerability severity (critical, important, moderate, low)
   - `--exact`: Use exact component matching instead of fuzzy matching
   - `--format`: Output format (table, json, csv)
   - `--count-only`: Show only result counts
 
-  **Note**: At least one filter (`--component`, `--product`, `--cpe`, `--purl`, or `--year`) must be specified.
+  **Note**: At least one filter (`--component`, `--product`, `--cpe`, `--purl`, `--severity`, or `--year`) must be specified.
 
   #### Output Format
   The script displays results grouped by product and ordered by state, showing:
