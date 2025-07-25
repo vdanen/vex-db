@@ -268,7 +268,7 @@ Examples:
     
     parser.add_argument(
         '--product', '-p',
-        help='Filter results by product name (supports partial matches)'
+        help='Filter results or search by product name (supports partial matches)'
     )
 
     parser.add_argument(
