@@ -289,7 +289,9 @@ Examples:
 
     parser.add_argument(
         '--severity', '-s',
-        help='Filter results by severity (e.g., "critical", "high", "medium", "low")'
+        choices=['critical', 'important', 'moderate', 'low'],
+        type=str.lower, # convert to lowercase
+        help='Filter results by severity (e.g., "critical", "important", "moderate", "low")'
     )
 
     parser.add_argument(
@@ -324,10 +326,6 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    if args.severity and args.severity.capitalize() not in ["Critical", "Important", "Moderate", "Low"]:
-        print(f"❌ Invalid severity: {args.severity}. Please use one of: critical, important, moderate, low")
-        sys.exit(1)
 
     # listing CPEs is a one-off
     if args.list_cpes:
