@@ -10,4 +10,4 @@ tar xf ${archive} -C ${today}
 
 sqlite3 vex.db <vex-db.sql
 
-time python3 import-vex.py ${today} --database-url "sqlite:///vex.db"
+time python3 import-vex-db.py ${today} --database-url "sqlite:///vex.db"

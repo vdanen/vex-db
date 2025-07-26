@@ -82,25 +82,25 @@ If you upload to `myorg/vex-security-data`, you'll get:
 
 ## Usage
 
-### Database Import (`import-vex.py`)
+### Database Import (`import-vex-db.py`)
 
 Import VEX files into a database:
 
 ```bash
 # Single file
-python import-vex.py cve-2022-48632.json
+python import-vex-db.py cve-2022-48632.json
 
 # Directory (recursive)
-python import-vex.py /path/to/vex/files/
+python import-vex-db.py /path/to/vex/files/
 
 # Directory (non-recursive)
-python import-vex.py /path/to/vex/files/ --no-recursive
+python import-vex-db.py /path/to/vex/files/ --no-recursive
 
 # Custom database
-python import-vex.py /path/to/vex/files/ --database-url "postgresql://user:pass@host:port/db"
+python import-vex-db.py /path/to/vex/files/ --database-url "postgresql://user:pass@host:port/db"
 
 # Continue on errors
-python import-vex.py /path/to/vex/files/ --continue-on-error
+python import-vex-db.py /path/to/vex/files/ --continue-on-error
 ```
 
 ### HuggingFace Dataset Upload (`import-vex-dataset.py`)
@@ -224,17 +224,17 @@ print(merged_df.head())
 
 ### SQLite (Default)
 ```bash
-python import-vex.py data/ --database-url "sqlite:///vex.db"
+python import-vex-db.py data/ --database-url "sqlite:///vex.db"
 ```
 
 ### PostgreSQL
 ```bash
-python import-vex.py data/ --database-url "postgresql://user:password@localhost:5432/vex_db"
+python import-vex-db.py data/ --database-url "postgresql://user:password@localhost:5432/vex_db"
 ```
 
 ### MySQL
 ```bash
-python import-vex.py data/ --database-url "mysql+pymysql://user:password@localhost:3306/vex_db"
+python import-vex-db.py data/ --database-url "mysql+pymysql://user:password@localhost:3306/vex_db"
 ```
 
 ## Example Data Processing
@@ -264,7 +264,7 @@ The scripts process VEX files and extract:
 
 ```
 vex-db/
-├── import-vex.py              # Database import script
+├── import-vex-db.py           # Database import script
 ├── import-vex-dataset.py      # HuggingFace dataset upload script
 ├── query-vex.py               # Database query script
 ├── initialize.sh              # Database initialization
