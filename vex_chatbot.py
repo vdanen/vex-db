@@ -35,18 +35,179 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VEXDataLoader:
-    """Load and prepare VEX data from SQLite database"""
+    """Load and prepare VEX data from SQLite database or HuggingFace datasets"""
     
-    def __init__(self, db_path: str = "vex.db"):
+    def __init__(self, db_path: str = "vex.db", use_huggingface: bool = False, hf_repo_id: str = None):
         self.db_path = db_path
-        if not Path(db_path).exists():
-            raise FileNotFoundError(f"Database file '{db_path}' not found!")
+        self.use_huggingface = use_huggingface
+        self.hf_repo_id = hf_repo_id
+        
+        if use_huggingface:
+            if not hf_repo_id:
+                raise ValueError("hf_repo_id must be provided when use_huggingface=True")
+            logger.info(f"Using HuggingFace dataset: {hf_repo_id}")
+        else:
+            if not Path(db_path).exists():
+                raise FileNotFoundError(f"Database file '{db_path}' not found!")
+            logger.info(f"Using SQLite database: {db_path}")
     
     def load_vex_data(self) -> List[Document]:
         """Load VEX data and convert to langchain Documents"""
+        if self.use_huggingface:
+            return self._load_from_huggingface()
+        else:
+            return self._load_from_sqlite()
+    
+    def _load_from_huggingface(self) -> List[Document]:
+        """Load VEX data from HuggingFace datasets"""
+        logger.info("Loading VEX data from HuggingFace datasets...")
+        
+        try:
+            from datasets import load_dataset
+            
+            # Load both CVE and affects datasets
+            cve_dataset = load_dataset(f"{self.hf_repo_id}-cve", split="train")
+            affects_dataset = load_dataset(f"{self.hf_repo_id}-affects", split="train")
+            
+            logger.info(f"Loaded {len(cve_dataset):,} CVEs and {len(affects_dataset):,} product records from HuggingFace")
+            
+            # Create statistics document
+            stats_doc = self._create_hf_stats_document(cve_dataset, affects_dataset)
+            documents = [stats_doc]
+            
+            # Convert datasets to pandas for easier processing
+            cve_df = cve_dataset.to_pandas()
+            affects_df = affects_dataset.to_pandas()
+            
+            # Group affects by CVE
+            affects_grouped = affects_df.groupby('cve').agg({
+                'product': lambda x: '; '.join(x.dropna().unique()),
+                'state': lambda x: '; '.join(x.dropna().unique()),
+                'components': lambda x: '; '.join(x.dropna().unique()),
+                'reason': lambda x: '; '.join(x.dropna().unique())
+            }).reset_index()
+            
+            # Merge CVE data with grouped affects
+            merged_df = cve_df.merge(affects_grouped, on='cve', how='left')
+            
+            # Create documents
+            for _, row in merged_df.iterrows():
+                content_parts = [
+                    f"CVE: {row['cve']}",
+                    f"Description: {row.get('description', 'N/A')}",
+                    f"CVSS Score: {row.get('cvss_score', 'N/A')}",
+                    f"Severity: {row.get('severity', 'N/A')}",
+                    f"Public Date: {row.get('public_date', 'N/A')}",
+                    f"CWE: {row.get('cwe', 'N/A')}",
+                    f"Affected Products: {row.get('product', 'N/A')}",
+                    f"Vulnerability States: {row.get('state', 'N/A')}",
+                    f"Components: {row.get('components', 'N/A')}",
+                    f"Reasons: {row.get('reason', 'N/A')}"
+                ]
+                
+                content = "\n".join(content_parts)
+                
+                metadata = {
+                    "cve": str(row['cve']) if row['cve'] else None,
+                    "cvss_score": float(row.get('cvss_score')) if row.get('cvss_score') else None,
+                    "severity": str(row.get('severity')) if row.get('severity') else None,
+                    "public_date": str(row.get('public_date')) if row.get('public_date') else None,
+                    "source": "huggingface_dataset"
+                }
+                
+                documents.append(Document(page_content=content, metadata=metadata))
+            
+            logger.info(f"Created {len(documents)} documents from HuggingFace datasets (including statistics)")
+            return documents
+            
+        except ImportError:
+            raise ImportError("datasets package is required for HuggingFace integration. Install with: pip install datasets")
+        except Exception as e:
+            logger.error(f"Failed to load from HuggingFace: {e}")
+            raise
+    
+    def _create_hf_stats_document(self, cve_dataset, affects_dataset) -> Document:
+        """Create statistics document from HuggingFace datasets"""
+        
+        # Convert to pandas for analysis
+        cve_df = cve_dataset.to_pandas()
+        affects_df = affects_dataset.to_pandas()
+        
+        total_cves = len(cve_df)
+        total_products = len(affects_df)
+        unique_products = affects_df['product'].nunique()
+        
+        # Calculate statistics
+        severity_stats = cve_df['severity'].value_counts()
+        
+        # Extract year from public_date and count
+        cve_df['year'] = pd.to_datetime(cve_df['public_date'], errors='coerce').dt.year
+        year_stats = cve_df['year'].value_counts().sort_index(ascending=False).head(10)
+        
+        state_stats = affects_df['state'].value_counts()
+        top_products = affects_df['product'].value_counts().head(10)
+        
+        stats_content = [
+            "VEX DATABASE COMPREHENSIVE STATISTICS AND OVERVIEW",
+            "=" * 60,
+            "",
+            "This document contains complete statistics about the VEX vulnerability database.",
+            "Use this information to answer questions about totals, counts, and distributions.",
+            "Data source: HuggingFace Datasets",
+            "",
+            "COMMON QUESTIONS AND ANSWERS:",
+            "- How many CVEs are in the database? Answer: See total CVEs below",
+            "- What is the total number of vulnerabilities? Answer: See total CVEs below", 
+            "- How many vulnerabilities are there? Answer: See total CVEs below",
+            "- What is the CVE count? Answer: See total CVEs below",
+            "- How many security issues are tracked? Answer: See total CVEs below",
+            "- Database size and statistics? Answer: See totals below",
+            "",
+            f"TOTAL RECORDS IN DATABASE:",
+            f"- Total CVEs: {total_cves:,} vulnerabilities",
+            f"- Total Product Records: {total_products:,} affected product entries",
+            f"- Unique Products: {unique_products:,} distinct products",
+            "",
+            "CVE SEVERITY DISTRIBUTION:"
+        ]
+        
+        for severity, count in severity_stats.items():
+            stats_content.append(f"- {severity}: {count:,} CVEs")
+        
+        stats_content.extend(["", "CVE DISTRIBUTION BY YEAR (Recent 10 years):"])
+        for year, count in year_stats.items():
+            if pd.notna(year):
+                stats_content.append(f"- {int(year)}: {count:,} CVEs")
+        
+        stats_content.extend(["", "VULNERABILITY STATES DISTRIBUTION:"])
+        for state, count in state_stats.items():
+            stats_content.append(f"- {state}: {count:,} product records")
+        
+        stats_content.extend(["", "TOP 10 MOST AFFECTED PRODUCTS:"])
+        for product, count in top_products.items():
+            stats_content.append(f"- {str(product)[:50]}: {count:,} vulnerability records")
+        
+        content = "\n".join(stats_content)
+        
+        metadata = {
+            "cve": "DATABASE_STATISTICS",
+            "total_cves": int(total_cves),
+            "total_products": int(total_products),
+            "source": "huggingface_dataset_stats",
+            "document_type": "statistics"
+        }
+        
+        return Document(page_content=content, metadata=metadata)
+    
+    def _load_from_sqlite(self) -> List[Document]:
+        """Load VEX data from SQLite database"""
         logger.info("Loading VEX data from database...")
         
         conn = sqlite3.connect(self.db_path)
+        
+        # First, create a comprehensive database statistics document
+        stats_doc = self._create_database_stats_document(conn)
+        documents = [stats_doc]
         
         # Get CVE information with affects data
         query = """
@@ -70,9 +231,7 @@ class VEXDataLoader:
         df = pd.read_sql_query(query, conn)
         conn.close()
         
-        documents = []
         for _, row in df.iterrows():
-            # Create comprehensive document content
             # Handle comma-separated lists and convert to semicolon-separated for better readability
             products = row['products'].replace(',', '; ') if row['products'] else 'N/A'
             states = row['states'].replace(',', '; ') if row['states'] else 'N/A'
@@ -95,17 +254,134 @@ class VEXDataLoader:
             content = "\n".join(content_parts)
             
             metadata = {
-                "cve": row['cve'],
-                "cvss_score": row['cvss_score'],
-                "severity": row['severity'],
-                "public_date": row['public_date'],
+                "cve": str(row['cve']) if row['cve'] else None,
+                "cvss_score": float(row['cvss_score']) if row['cvss_score'] else None,
+                "severity": str(row['severity']) if row['severity'] else None,
+                "public_date": str(row['public_date']) if row['public_date'] else None,
                 "source": "vex_database"
             }
             
             documents.append(Document(page_content=content, metadata=metadata))
         
-        logger.info(f"Loaded {len(documents)} VEX documents")
+        logger.info(f"Loaded {len(documents)} VEX documents (including database statistics)")
         return documents
+    
+    def _create_database_stats_document(self, conn) -> Document:
+        """Create a comprehensive database statistics document for better RAG retrieval"""
+        
+        # Get comprehensive statistics
+        stats_queries = {
+            'total_cves': "SELECT COUNT(*) as count FROM cve",
+            'total_products': "SELECT COUNT(*) as count FROM affects",
+            'unique_products': "SELECT COUNT(DISTINCT product) as count FROM affects WHERE product IS NOT NULL",
+            'severity_stats': """
+                SELECT severity, COUNT(*) as count 
+                FROM cve 
+                WHERE severity IS NOT NULL 
+                GROUP BY severity 
+                ORDER BY count DESC
+            """,
+            'year_stats': """
+                SELECT substr(public_date, 1, 4) as year, COUNT(*) as count 
+                FROM cve 
+                WHERE public_date IS NOT NULL AND substr(public_date, 1, 4) != ''
+                GROUP BY substr(public_date, 1, 4) 
+                ORDER BY year DESC 
+                LIMIT 10
+            """,
+            'state_stats': """
+                SELECT state, COUNT(*) as count 
+                FROM affects 
+                WHERE state IS NOT NULL 
+                GROUP BY state 
+                ORDER BY count DESC
+            """,
+            'top_products': """
+                SELECT substr(product, 1, 50) as product, COUNT(*) as count 
+                FROM affects 
+                WHERE product IS NOT NULL 
+                GROUP BY product 
+                ORDER BY count DESC 
+                LIMIT 10
+            """
+        }
+        
+        stats_content = [
+            "VEX DATABASE COMPREHENSIVE STATISTICS AND OVERVIEW",
+            "=" * 60,
+            "",
+            "This document contains complete statistics about the VEX vulnerability database.",
+            "Use this information to answer questions about totals, counts, and distributions.",
+            "",
+            "COMMON QUESTIONS AND ANSWERS:",
+            "- How many CVEs are in the database? Answer: See total CVEs below",
+            "- What is the total number of vulnerabilities? Answer: See total CVEs below", 
+            "- How many vulnerabilities are there? Answer: See total CVEs below",
+            "- What is the CVE count? Answer: See total CVEs below",
+            "- How many security issues are tracked? Answer: See total CVEs below",
+            "- Database size and statistics? Answer: See totals below",
+            ""
+        ]
+        
+        # Get basic counts
+        total_cves = pd.read_sql_query(stats_queries['total_cves'], conn).iloc[0]['count']
+        total_products = pd.read_sql_query(stats_queries['total_products'], conn).iloc[0]['count']
+        unique_products = pd.read_sql_query(stats_queries['unique_products'], conn).iloc[0]['count']
+        
+        stats_content.extend([
+            f"TOTAL RECORDS IN DATABASE:",
+            f"- Total CVEs: {total_cves:,} vulnerabilities",
+            f"- Total Product Records: {total_products:,} affected product entries",
+            f"- Unique Products: {unique_products:,} distinct products",
+            ""
+        ])
+        
+        # Severity breakdown
+        severity_df = pd.read_sql_query(stats_queries['severity_stats'], conn)
+        stats_content.extend([
+            "CVE SEVERITY DISTRIBUTION:",
+        ])
+        for _, row in severity_df.iterrows():
+            stats_content.append(f"- {row['severity']}: {row['count']:,} CVEs")
+        stats_content.append("")
+        
+        # Year breakdown
+        year_df = pd.read_sql_query(stats_queries['year_stats'], conn)
+        stats_content.extend([
+            "CVE DISTRIBUTION BY YEAR (Recent 10 years):",
+        ])
+        for _, row in year_df.iterrows():
+            stats_content.append(f"- {row['year']}: {row['count']:,} CVEs")
+        stats_content.append("")
+        
+        # State breakdown
+        state_df = pd.read_sql_query(stats_queries['state_stats'], conn)
+        stats_content.extend([
+            "VULNERABILITY STATES DISTRIBUTION:",
+        ])
+        for _, row in state_df.iterrows():
+            stats_content.append(f"- {row['state']}: {row['count']:,} product records")
+        stats_content.append("")
+        
+        # Top products
+        products_df = pd.read_sql_query(stats_queries['top_products'], conn)
+        stats_content.extend([
+            "TOP 10 MOST AFFECTED PRODUCTS:",
+        ])
+        for _, row in products_df.iterrows():
+            stats_content.append(f"- {row['product']}: {row['count']:,} vulnerability records")
+        
+        content = "\n".join(stats_content)
+        
+        metadata = {
+            "cve": "DATABASE_STATISTICS",
+            "total_cves": int(total_cves),
+            "total_products": int(total_products),
+            "source": "vex_database_stats",
+            "document_type": "statistics"
+        }
+        
+        return Document(page_content=content, metadata=metadata)
 
 class VEXChatbot:
     """RAG-based chatbot for VEX data queries"""
@@ -114,20 +390,29 @@ class VEXChatbot:
                  db_path: str = "vex.db",
                  model_name: str = "llama3.1",
                  embedding_model: str = "all-MiniLM-L6-v2",
-                 vector_db_path: str = "./vex_vectordb"):
+                 vector_db_path: str = "./vex_vectordb",
+                 use_huggingface: bool = False,
+                 hf_repo_id: str = None):
         
         self.db_path = db_path
         self.model_name = model_name
         self.vector_db_path = vector_db_path
+        self.use_huggingface = use_huggingface
+        self.hf_repo_id = hf_repo_id
         
         # Initialize components
-        self.data_loader = VEXDataLoader(db_path)
+        self.data_loader = VEXDataLoader(
+            db_path=db_path, 
+            use_huggingface=use_huggingface, 
+            hf_repo_id=hf_repo_id
+        )
         self.embeddings = HuggingFaceEmbeddings(model_name=embedding_model)
         self.llm = None
         self.vector_store = None
         self.qa_chain = None
         
-        logger.info(f"Initialized VEX Chatbot with model: {model_name}")
+        data_source = f"HuggingFace ({hf_repo_id})" if use_huggingface else f"SQLite ({db_path})"
+        logger.info(f"Initialized VEX Chatbot with model: {model_name}, data source: {data_source}")
     
     def check_ollama_connection(self) -> bool:
         """Check if Ollama is running and model is available"""
@@ -241,22 +526,27 @@ class VEXChatbot:
         Question: {question}
 
         Instructions:
-        - Provide specific, accurate information based on the context
+        - IMPORTANT: If you see a "VEX DATABASE COMPREHENSIVE STATISTICS" document in the context, use those exact numbers for database totals and statistics
+        - For statistical questions (totals, counts, distributions), prioritize the statistics document over individual CVE records
+        - For specific CVE questions, focus on the individual CVE documents
         - Include CVE IDs, CVSS scores, and severity levels when relevant
         - Mention affected products and components when applicable
-        - If asked for statistics, calculate them from the provided data
-        - If the context doesn't contain enough information, say so clearly
+        - When providing counts or statistics, always specify the source (e.g., "According to the database statistics...")
+        - If asked about database totals and you have the statistics document, use those authoritative numbers
         - Format your response clearly with bullet points or structured data when appropriate
+        - Be specific about the scope of your knowledge based on the retrieved context
 
         Answer:"""
 
         prompt = PromptTemplate(template=template, input_variables=["context", "question"])
         
-        # Create retrieval QA chain
+        # Create retrieval QA chain with improved retrieval
         self.qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
             chain_type="stuff",
-            retriever=self.vector_store.as_retriever(search_kwargs={"k": 10}),
+            retriever=self.vector_store.as_retriever(
+                search_kwargs={"k": 20}  # Retrieve more documents for better context
+            ),
             chain_type_kwargs={"prompt": prompt},
             return_source_documents=True
         )
@@ -285,6 +575,10 @@ class VEXChatbot:
         logger.info(f"Processing query: {question[:100]}...")
         
         try:
+            # Check if this is a statistical query that should use database stats
+            if self._is_statistical_query(question):
+                return self._handle_statistical_query(question, include_sources)
+            
             result = self.qa_chain({"query": question})
             
             response = {
@@ -310,6 +604,96 @@ class VEXChatbot:
                 "answer": f"Sorry, I encountered an error processing your question: {str(e)}",
                 "sources": []
             }
+    
+    def _is_statistical_query(self, question: str) -> bool:
+        """Check if the question is asking for database statistics"""
+        statistical_keywords = [
+            "how many", "total", "count", "number of", "statistics", 
+            "distribution", "breakdown", "overview", "database size"
+        ]
+        question_lower = question.lower()
+        return any(keyword in question_lower for keyword in statistical_keywords)
+    
+    def _handle_statistical_query(self, question: str, include_sources: bool = False) -> Dict[str, Any]:
+        """Handle statistical queries with direct database statistics"""
+        try:
+            # Get fresh database statistics directly
+            db_stats = self.get_stats()
+            
+            # Create comprehensive statistics context
+            stats_context = f"""VEX DATABASE COMPREHENSIVE STATISTICS:
+
+TOTAL RECORDS IN DATABASE:
+- Total CVEs: {db_stats['total_cves']:,} vulnerabilities
+- Total Product Records: {db_stats['total_affected_products']:,} affected product entries
+
+CVE SEVERITY DISTRIBUTION:"""
+            
+            for item in db_stats['by_severity']:
+                stats_context += f"\n- {item['severity']}: {item['count']:,} CVEs"
+            
+            stats_context += "\n\nCVE DISTRIBUTION BY YEAR (Recent years):"
+            for item in db_stats['by_year']:
+                stats_context += f"\n- {item['year']}: {item['count']:,} CVEs"
+            
+            # Create a direct prompt for statistical queries
+            prompt = f"""You are a cybersecurity expert assistant specializing in VEX vulnerability data analysis.
+
+Context (Current Database Statistics):
+{stats_context}
+
+Question: {question}
+
+Instructions:
+- Use the database statistics provided above to answer the question accurately
+- Provide specific numbers from the statistics when available
+- If asked for totals or counts, use the exact numbers from the TOTAL RECORDS section
+- Format your response clearly with specific data points
+- When mentioning totals, specify "According to the current database statistics"
+
+Answer:"""
+
+            # Use the LLM directly for this statistical query
+            response_text = self.llm.invoke(prompt)
+            
+            response = {
+                "question": question,
+                "answer": response_text,
+                "sources": [{
+                    "content": f"Database Statistics: {db_stats['total_cves']:,} total CVEs, {db_stats['total_affected_products']:,} product records",
+                    "metadata": {
+                        "source": "live_database_query",
+                        "total_cves": db_stats['total_cves'],
+                        "query_time": "real-time"
+                    }
+                }] if include_sources else []
+            }
+            
+            return response
+                
+        except Exception as e:
+            logger.error(f"Statistical query handling failed: {e}")
+            return self._fallback_to_regular_rag(question, include_sources)
+    
+    def _fallback_to_regular_rag(self, question: str, include_sources: bool = False) -> Dict[str, Any]:
+        """Fallback to regular RAG processing"""
+        result = self.qa_chain({"query": question})
+        
+        response = {
+            "question": question,
+            "answer": result["result"],
+            "sources": []
+        }
+        
+        if include_sources and "source_documents" in result:
+            for doc in result["source_documents"]:
+                source_info = {
+                    "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+                    "metadata": doc.metadata
+                }
+                response["sources"].append(source_info)
+        
+        return response
     
     def get_stats(self) -> Dict[str, Any]:
         """Get basic statistics about the VEX database"""
@@ -358,6 +742,7 @@ Examples:
   %(prog)s --query "What are the most critical CVEs from 2024?"
   %(prog)s --query "Show me CVEs affecting OpenSSL" --sources
   %(prog)s --stats
+  %(prog)s --huggingface --hf-repo-id "username/vex-dataset" --query "How many CVEs?"
   %(prog)s --rebuild-vectors  # Rebuild the vector database
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
@@ -368,16 +753,25 @@ Examples:
     parser.add_argument("--stats", action="store_true", help="Show database statistics")
     parser.add_argument("--model", "-m", default="llama3.1", help="Ollama model to use (default: llama3.1)")
     parser.add_argument("--database", "-d", default="vex.db", help="Path to VEX database (default: vex.db)")
+    parser.add_argument("--huggingface", "--hf", action="store_true", help="Use HuggingFace dataset instead of SQLite")
+    parser.add_argument("--hf-repo-id", help="HuggingFace repository ID (e.g., 'username/vex-dataset')")
     parser.add_argument("--rebuild-vectors", action="store_true", help="Force rebuild of vector database")
     parser.add_argument("--interactive", "-i", action="store_true", help="Start interactive chat session")
     
     args = parser.parse_args()
     
+    # Validate HuggingFace arguments
+    if args.huggingface and not args.hf_repo_id:
+        print("❌ Error: --hf-repo-id is required when using --huggingface")
+        sys.exit(1)
+    
     # Create chatbot instance
     try:
         chatbot = VEXChatbot(
             db_path=args.database,
-            model_name=args.model
+            model_name=args.model,
+            use_huggingface=args.huggingface,
+            hf_repo_id=args.hf_repo_id
         )
         
         # Initialize

@@ -56,29 +56,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def initialize_chatbot():
-    """Initialize the chatbot with caching"""
-    if 'chatbot' not in st.session_state:
-        with st.spinner("🤖 Initializing VEX Chatbot..."):
-            try:
-                chatbot = VEXChatbot(
-                    db_path=st.session_state.get('db_path', 'vex.db'),
-                    model_name=st.session_state.get('model_name', 'llama3.1')
-                )
-                chatbot.initialize()
-                st.session_state.chatbot = chatbot
-                st.success("✅ Chatbot initialized successfully!")
-            except Exception as e:
-                st.error(f"❌ Failed to initialize chatbot: {str(e)}")
-                st.info("""
-                **Setup Required:**
-                1. Install Ollama: https://ollama.ai/
-                2. Start Ollama: `ollama serve`
-                3. Pull a model: `ollama pull llama3.1`
-                4. Make sure your VEX database exists
-                """)
-                return False
-    return True
+# Chatbot initialization now handled in main flow
 
 def load_database_stats():
     """Load and cache database statistics"""
@@ -230,50 +208,76 @@ def main():
     st.title("🛡️ VEX Data Chatbot")
     st.markdown("*Query vulnerability data using natural language*")
     
-    # Sidebar configuration
+    # Configuration sidebar
     with st.sidebar:
         st.header("⚙️ Configuration")
         
-        # Database path
-        db_path = st.text_input("Database Path", value="vex.db")
-        st.session_state.db_path = db_path
+        # Data source selection
+        data_source = st.radio(
+            "Data Source:",
+            ["SQLite Database", "HuggingFace Dataset"],
+            help="Choose between local SQLite database or HuggingFace dataset"
+        )
+        
+        if data_source == "SQLite Database":
+            db_path = st.text_input(
+                "Database Path:",
+                value="vex.db",
+                help="Path to the VEX SQLite database file"
+            )
+            use_hf = False
+            hf_repo_id = None
+        else:
+            hf_repo_id = st.text_input(
+                "HuggingFace Repository ID:",
+                value="",
+                placeholder="username/vex-dataset",
+                help="HuggingFace repository ID (e.g., 'username/vex-dataset')"
+            )
+            db_path = "vex.db"  # Still needed for initialization
+            use_hf = True
         
         # Model selection
         model_name = st.selectbox(
-            "LLM Model", 
-            ["llama3.1", "llama3.2", "mistral", "codellama", "qwen2"],
-            index=0
+            "LLM Model:",
+            ["llama3.1", "llama2", "mistral", "codellama"],
+            help="Choose the Ollama model for responses"
         )
-        st.session_state.model_name = model_name
         
-        # Force rebuild vectors
-        if st.button("🔄 Rebuild Vector Database"):
-            if 'chatbot' in st.session_state:
-                del st.session_state.chatbot
-            st.rerun()
-        
-        st.markdown("---")
-        
-        # Database stats
-        st.header("📊 Database Overview")
-        stats = load_database_stats()
-        
-        if stats:
-            st.metric("Total CVEs", f"{stats['total_cves']:,}")
-            st.metric("Affected Products", f"{stats['total_products']:,}")
-            
-            if st.button("📈 View Detailed Analytics"):
-                st.session_state.show_analytics = True
-                st.rerun()
+        # Vector database options
+        rebuild_vectors = st.checkbox(
+            "Rebuild Vector Database",
+            help="Force rebuild the vector embeddings (takes time)"
+        )
 
+    # Initialize chatbot if not already done or if configuration changed
+    config_key = f"{data_source}_{db_path}_{hf_repo_id}_{model_name}"
+    if "chatbot" not in st.session_state or st.session_state.get("config_key") != config_key:
+        if data_source == "HuggingFace Dataset" and not hf_repo_id:
+            st.error("Please provide a HuggingFace repository ID when using HuggingFace dataset")
+            st.stop()
+        
+        try:
+            with st.spinner("🚀 Initializing VEX Chatbot..."):
+                st.session_state.chatbot = VEXChatbot(
+                    db_path=db_path,
+                    model_name=model_name,
+                    use_huggingface=use_hf,
+                    hf_repo_id=hf_repo_id
+                )
+                st.session_state.chatbot.initialize(force_rebuild_vectors=rebuild_vectors)
+                st.session_state.config_key = config_key
+                
+            st.success("✅ Chatbot initialized successfully!")
+        except Exception as e:
+            st.error(f"❌ Failed to initialize chatbot: {str(e)}")
+            st.stop()
+    
     # Main content area
     tab1, tab2, tab3 = st.tabs(["💬 Chat", "📊 Analytics", "ℹ️ Help"])
     
     with tab1:
         # Chat interface
-        if not initialize_chatbot():
-            return
-        
         # Initialize chat history
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
