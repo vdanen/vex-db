@@ -240,7 +240,7 @@ def format_output(results, component, exact=False):
             cmps = ', '.join(components_list)
             if len(cmps) > 100:
                 cmps = cmps[:100] + '...'
-            print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cwe:<20} | {cmps}")
+            print(f"  {state_icon:<3} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cwe:<20} | {cmps}")
         print()
 
 
