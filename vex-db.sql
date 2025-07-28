@@ -4,6 +4,7 @@ CREATE TABLE `cve` (
     `cvss_score` FLOAT,
     `cvss_metrics` VARCHAR(48),
     `severity` VARCHAR(10),
+    `cwe` TEXT,
     `public_date` TEXT,
     `updated_date` TEXT,
     `description` TEXT,

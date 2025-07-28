@@ -9,6 +9,7 @@ This project downloads and processes VEX (Vulnerability Exploitability eXchange)
 - **Extracts comprehensive data** including:
   - CVE ID and details
   - CVSS scores and metrics
+  - CWE identifier(s)
   - Vulnerability descriptions and statements
   - Affected products and components
   - Vulnerability status (fixed, known_affected, known_not_affected)
@@ -25,6 +26,7 @@ This project downloads and processes VEX (Vulnerability Exploitability eXchange)
 - `cvss_score` (FLOAT): CVSS v3.1 base score
 - `cvss_metrics` (VARCHAR): CVSS vector string
 - `severity` (VARCHAR): Vulnerability severity (Low, Medium, High, Critical)
+- `cwe` (TEXT): CWE identifier(s)
 - `public_date` (TEXT): Public disclosure date
 - `updated_date` (TEXT): Last update date
 - `description` (TEXT): Vulnerability description
@@ -174,9 +176,6 @@ python query-vex.py --product "Red Hat Enterprise Linux"
 
 # Search by severity
 python query-vex.py --severity "High"
-
-# Search by CVSS score range
-python query-vex.py --cvss-min 7.0 --cvss-max 10.0
 ```
 
 ### Using HuggingFace Dataset
@@ -241,7 +240,7 @@ python import-vex-db.py data/ --database-url "mysql+pymysql://user:password@loca
 
 The scripts process VEX files and extract:
 
-- **CVE metadata**: ID, CVSS scores, severity, dates, descriptions
+- **CVE metadata**: ID, CVSS scores, severity, CWEs, dates, descriptions
 - **Product relationships**: Which products are affected, fixed, or not affected
 - **Component details**: Specific software components and versions
 - **Advisory information**: Errata, release dates, mitigation details

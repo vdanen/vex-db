@@ -31,6 +31,9 @@ def process_vex_data(vex_obj, packages):
     # Get severity
     severity = vex_obj.global_impact if hasattr(vex_obj, 'global_impact') else None
     
+    # Get CWE
+    cwe = vex_obj.cwe_id if hasattr(vex_obj, 'cwe_id') else None
+
     # Get dates
     public_date = vex_obj.release_date if hasattr(vex_obj, 'release_date') else None
     updated_date = vex_obj.updated if hasattr(vex_obj, 'updated') else None
@@ -65,6 +68,7 @@ def process_vex_data(vex_obj, packages):
         'cvss_score': cvss_score,
         'cvss_metrics': cvss_metrics,
         'severity': severity,
+        'cwe': cwe,
         'public_date': public_date,
         'updated_date': updated_date,
         'description': description,

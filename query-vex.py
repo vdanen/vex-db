@@ -34,7 +34,8 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
         a.components,
         c.public_date,
         c.cvss_score,
-        c.severity
+        c.severity,
+        c.cwe
     FROM affects a
     LEFT JOIN cve c ON a.cve = c.cve
     """
@@ -188,6 +189,7 @@ def format_output(results, component, exact=False):
             public_date = entry['public_date'] or 'N/A'
             cvss_score = entry['cvss_score'] or 'N/A'
             severity = entry['severity'] or 'N/A'
+            cwe = entry['cwe'] or ''
             
             # Handle combined affected+wontfix state
             if entry.get('combined_state') == 'affected_wontfix':
@@ -238,7 +240,7 @@ def format_output(results, component, exact=False):
             cmps = ', '.join(components_list)
             if len(cmps) > 100:
                 cmps = cmps[:100] + '...'
-            print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cmps}")
+            print(f"  {state_icon} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cwe:<20} | {cmps}")
         print()
 
 
