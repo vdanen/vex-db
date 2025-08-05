@@ -860,6 +860,17 @@ Examples:
                 overall_max = max(stats['max'] for stats in risk_stats.values())
                 print(f"Days of risk range:              {overall_min:>3}-{overall_max} days")
 
+        # Show equivalent query-vex.py command for drilling down
+        print(f"\n💡 For detailed CVE listings, use:")
+        query_cmd = f"python3 query-vex.py --year {args.year}"
+        if args.product:
+            query_cmd += f' --product "{args.product}"'
+        elif args.cpe:
+            query_cmd += f' --cpe "{args.cpe}"'
+        if args.database != 'vex.db':
+            query_cmd += f' --database "{args.database}"'
+        print(f"   {query_cmd}")
+
     except sqlite3.Error as e:
         print(f"❌ Database query error: {e}")
         sys.exit(1)
