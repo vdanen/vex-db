@@ -41,40 +41,64 @@ def parse_public_date(date_str):
         return None
 
 
-def get_days_of_risk_stats(conn, year):
+def get_days_of_risk_stats(conn, year, product=None, cpe=None):
     """Calculate days of risk statistics for each severity level (excluding CVEs marked as only 'not_affected')"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["c.public_date LIKE ?"]
+    where_conditions.extend([
+        "c.public_date IS NOT NULL",
+        "a.release_date IS NOT NULL", 
+        "a.errata IS NOT NULL",
+        "a.errata != ''"
+    ])
+    params = [f"{year}%"]
+    
+    if product:
+        where_conditions.append("a.product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        where_conditions.append("a.cpe LIKE ?")
+        params.append(f"%{cpe}%")
+    
     # Get all fixed CVEs
-    query = """
+    query = f"""
     SELECT c.cve, c.public_date, c.severity, a.release_date
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND c.public_date IS NOT NULL
-    AND a.release_date IS NOT NULL
-    AND a.errata IS NOT NULL
-    AND a.errata != ''
+    WHERE {' AND '.join(where_conditions)}
     ORDER BY c.cve, a.release_date
     """
 
+    # Build WHERE conditions for not_affected query
+    not_affected_where = ["c.public_date LIKE ?", "a.product IS NOT NULL", "a.product != ''"]
+    not_affected_params = [f"{year}%"]
+    
+    if product:
+        not_affected_where.append("a.product LIKE ?")
+        not_affected_params.append(f"%{product}%")
+    
+    if cpe:
+        not_affected_where.append("a.cpe LIKE ?")
+        not_affected_params.append(f"%{cpe}%")
+
     # Get CVEs that are only 'not_affected'
-    query_only_not_affected = """
+    query_only_not_affected = f"""
     SELECT c.cve
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(not_affected_where)}
     GROUP BY c.cve
     HAVING COUNT(*) = COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END)
     AND COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END) > 0
     """
 
     cursor = conn.cursor()
-    cursor.execute(query, (f"{year}%",))
+    cursor.execute(query, params)
     all_results = cursor.fetchall()
 
     # Get CVEs that are only 'not_affected'
-    cursor.execute(query_only_not_affected, (f"{year}%",))
+    cursor.execute(query_only_not_affected, not_affected_params)
     only_not_affected = {row['cve'] for row in cursor.fetchall()}
 
     # Filter out CVEs that are only 'not_affected'
@@ -118,26 +142,34 @@ def get_days_of_risk_stats(conn, year):
     return risk_stats
 
 
-def get_cves_affecting_products(conn, year):
+def get_cves_affecting_products(conn, year, product=None, cpe=None):
     """Get CVEs from a specific year that actually affect products (excluding those marked as only 'not_affected'), grouped by severity"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["c.public_date LIKE ?", "a.product IS NOT NULL", "a.product != ''"]
+    params = [f"{year}%"]
+    
+    if product:
+        where_conditions.append("a.product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        where_conditions.append("a.cpe LIKE ?")
+        params.append(f"%{cpe}%")
+
     # First, get all CVEs that have affects data
-    query_all = """
+    query_all = f"""
     SELECT DISTINCT c.cve, c.severity
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(where_conditions)}
     """
 
     # Then find CVEs that are marked as ONLY 'not_affected' across all products
-    query_only_not_affected = """
+    query_only_not_affected = f"""
     SELECT c.cve
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(where_conditions)}
     GROUP BY c.cve
     HAVING COUNT(*) = COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END)
     AND COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END) > 0
@@ -146,11 +178,11 @@ def get_cves_affecting_products(conn, year):
     cursor = conn.cursor()
 
     # Get all CVEs
-    cursor.execute(query_all, (f"{year}%",))
+    cursor.execute(query_all, params)
     all_results = cursor.fetchall()
 
     # Get CVEs that are only 'not_affected'
-    cursor.execute(query_only_not_affected, (f"{year}%",))
+    cursor.execute(query_only_not_affected, params)
     only_not_affected = {row['cve'] for row in cursor.fetchall()}
 
     # Filter out CVEs that are only 'not_affected'
@@ -164,21 +196,37 @@ def get_cves_affecting_products(conn, year):
     return dict(severity_counts), len(filtered_results)
 
 
-def get_cves_not_affecting_products(conn, year):
+def get_cves_not_affecting_products(conn, year, product=None, cpe=None):
     """Get CVEs from a specific year that do NOT affect any products, grouped by severity"""
-    query = """
+    # Note: When filtering by product/CPE, this function becomes less meaningful
+    # since we're looking for CVEs that DON'T affect products, but we're filtering BY product/CPE
+    # We'll still apply the filters for consistency, but results may be empty or unexpected
+    where_conditions = ["c.public_date LIKE ?"]
+    params = [f"{year}%"]
+    
+    subquery_conditions = ["product IS NOT NULL", "product != ''"]
+    
+    if product:
+        subquery_conditions.append("product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        subquery_conditions.append("cpe LIKE ?")  
+        params.append(f"%{cpe}%")
+    
+    query = f"""
     SELECT DISTINCT c.cve, c.severity
     FROM cve c
-    WHERE c.public_date LIKE ?
+    WHERE {' AND '.join(where_conditions)}
     AND c.cve NOT IN (
         SELECT DISTINCT cve
         FROM affects
-        WHERE product IS NOT NULL AND product != ''
+        WHERE {' AND '.join(subquery_conditions)}
     )
     """
 
     cursor = conn.cursor()
-    cursor.execute(query, (f"{year}%",))
+    cursor.execute(query, params)
     results = cursor.fetchall()
 
     severity_counts = defaultdict(int)
@@ -189,22 +237,32 @@ def get_cves_not_affecting_products(conn, year):
     return dict(severity_counts), len(results)
 
 
-def get_errata_statistics(conn, year):
+def get_errata_statistics(conn, year, product=None, cpe=None):
     """Get errata released in a specific year, aggregated by highest severity"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["a.release_date LIKE ?", "a.errata IS NOT NULL", "a.errata != ''"]
+    params = [f"%, {year}"]
+    
+    if product:
+        where_conditions.append("a.product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        where_conditions.append("a.cpe LIKE ?")
+        params.append(f"%{cpe}%")
+
     # Get all errata released in the specified year with their associated CVE severities
     # Note: release_date is in format "Month DD, YYYY", so we match the year at the end
-    query = """
+    query = f"""
     SELECT DISTINCT a.errata, c.severity
     FROM affects a
     INNER JOIN cve c ON a.cve = c.cve
-    WHERE a.release_date LIKE ?
-    AND a.errata IS NOT NULL
-    AND a.errata != ''
+    WHERE {' AND '.join(where_conditions)}
     ORDER BY a.errata, c.severity
     """
 
     cursor = conn.cursor()
-    cursor.execute(query, (f"%, {year}",))
+    cursor.execute(query, params)
     results = cursor.fetchall()
 
     # Group by errata and find the highest severity for each
@@ -237,87 +295,139 @@ def get_errata_statistics(conn, year):
     return dict(severity_counts), len(errata_highest_severity)
 
 
-def get_top_cwes(conn, year, limit=10):
+def get_top_cwes(conn, year, limit=10, product=None, cpe=None):
     """Get the top CWEs for a specific year"""
-    query = """
-    SELECT c.cwe, COUNT(*) as count
-    FROM cve c
-    WHERE c.public_date LIKE ?
-    AND c.cwe IS NOT NULL
-    AND c.cwe != ''
-    GROUP BY c.cwe
-    ORDER BY count DESC, c.cwe ASC
-    LIMIT ?
-    """
+    if product or cpe:
+        # When filtering by product/CPE, we need to join with affects table
+        where_conditions = ["c.public_date LIKE ?", "c.cwe IS NOT NULL", "c.cwe != ''"]
+        params = [f"{year}%"]
+        
+        if product:
+            where_conditions.append("a.product LIKE ?")
+            params.append(f"%{product}%")
+        
+        if cpe:
+            where_conditions.append("a.cpe LIKE ?")
+            params.append(f"%{cpe}%")
+        
+        params.append(limit)
+        
+        query = f"""
+        SELECT c.cwe, COUNT(DISTINCT c.cve) as count
+        FROM cve c
+        INNER JOIN affects a ON c.cve = a.cve
+        WHERE {' AND '.join(where_conditions)}
+        GROUP BY c.cwe
+        ORDER BY count DESC, c.cwe ASC
+        LIMIT ?
+        """
+    else:
+        # Original query when no product/CPE filter
+        query = """
+        SELECT c.cwe, COUNT(*) as count
+        FROM cve c
+        WHERE c.public_date LIKE ?
+        AND c.cwe IS NOT NULL
+        AND c.cwe != ''
+        GROUP BY c.cwe
+        ORDER BY count DESC, c.cwe ASC
+        LIMIT ?
+        """
+        params = [f"{year}%", limit]
 
     cursor = conn.cursor()
-    cursor.execute(query, (f"{year}%", limit))
+    cursor.execute(query, params)
     results = cursor.fetchall()
 
     return [(row['cwe'], row['count']) for row in results]
 
 
-def get_total_unique_cwes_count(conn, year):
+def get_total_unique_cwes_count(conn, year, product=None, cpe=None):
     """Get the total count of unique CWEs for a specific year"""
-    query = """
-    SELECT COUNT(DISTINCT c.cwe) as unique_cwe_count
-    FROM cve c
-    WHERE c.public_date LIKE ?
-    AND c.cwe IS NOT NULL
-    AND c.cwe != ''
-    """
+    if product or cpe:
+        # When filtering by product/CPE, we need to join with affects table
+        where_conditions = ["c.public_date LIKE ?", "c.cwe IS NOT NULL", "c.cwe != ''"]
+        params = [f"{year}%"]
+        
+        if product:
+            where_conditions.append("a.product LIKE ?")
+            params.append(f"%{product}%")
+        
+        if cpe:
+            where_conditions.append("a.cpe LIKE ?")
+            params.append(f"%{cpe}%")
+        
+        query = f"""
+        SELECT COUNT(DISTINCT c.cwe) as unique_cwe_count
+        FROM cve c
+        INNER JOIN affects a ON c.cve = a.cve
+        WHERE {' AND '.join(where_conditions)}
+        """
+    else:
+        # Original query when no product/CPE filter
+        query = """
+        SELECT COUNT(DISTINCT c.cwe) as unique_cwe_count
+        FROM cve c
+        WHERE c.public_date LIKE ?
+        AND c.cwe IS NOT NULL
+        AND c.cwe != ''
+        """
+        params = [f"{year}%"]
 
     cursor = conn.cursor()
-    cursor.execute(query, (f"{year}%",))
+    cursor.execute(query, params)
     result = cursor.fetchone()
 
     return result['unique_cwe_count'] if result else 0
 
 
-def get_cve_details_by_severity(conn, year):
+def get_cve_details_by_severity(conn, year, product=None, cpe=None):
     """Get detailed CVE information for each severity level"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["c.public_date LIKE ?", "a.product IS NOT NULL", "a.product != ''"]
+    params = [f"{year}%"]
+    
+    if product:
+        where_conditions.append("a.product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        where_conditions.append("a.cpe LIKE ?")
+        params.append(f"%{cpe}%")
+
     # First get all CVEs that have affects data
-    query_all = """
+    query_all = f"""
     SELECT DISTINCT c.cve, c.public_date, c.severity
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(where_conditions)}
     """
 
     # Then get CVEs with errata (fixed CVEs)
-    query_fixed = """
+    fixed_where_conditions = where_conditions + ["a.errata IS NOT NULL", "a.errata != ''"]
+    query_fixed = f"""
     SELECT c.cve, c.public_date, c.severity, a.product, a.components,
            a.errata, a.release_date
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
-    AND a.errata IS NOT NULL
-    AND a.errata != ''
+    WHERE {' AND '.join(fixed_where_conditions)}
     ORDER BY c.cve, a.release_date
     """
 
     # Get state information for all CVEs
-    query_states = """
+    query_states = f"""
     SELECT c.cve, c.severity, a.state
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(where_conditions)}
     """
 
     # Get CVEs that are only 'not_affected'
-    query_only_not_affected = """
+    query_only_not_affected = f"""
     SELECT c.cve
     FROM cve c
     INNER JOIN affects a ON c.cve = a.cve
-    WHERE c.public_date LIKE ?
-    AND a.product IS NOT NULL
-    AND a.product != ''
+    WHERE {' AND '.join(where_conditions)}
     GROUP BY c.cve
     HAVING COUNT(*) = COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END)
     AND COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END) > 0
@@ -326,19 +436,19 @@ def get_cve_details_by_severity(conn, year):
     cursor = conn.cursor()
 
     # Get all CVEs that affect products
-    cursor.execute(query_all, (f"{year}%",))
+    cursor.execute(query_all, params)
     all_cves_raw = cursor.fetchall()
 
     # Get fixed CVEs with errata details
-    cursor.execute(query_fixed, (f"{year}%",))
+    cursor.execute(query_fixed, params)
     fixed_results_raw = cursor.fetchall()
 
     # Get state information
-    cursor.execute(query_states, (f"{year}%",))
+    cursor.execute(query_states, params)
     state_results_raw = cursor.fetchall()
 
     # Get CVEs that are only 'not_affected'
-    cursor.execute(query_only_not_affected, (f"{year}%",))
+    cursor.execute(query_only_not_affected, params)
     only_not_affected = {row['cve'] for row in cursor.fetchall()}
 
     # Filter out CVEs that are only 'not_affected'
@@ -616,9 +726,11 @@ def main():
         description="Generate VEX database statistics for a specific year including CVE severity breakdowns, errata statistics, and top CWEs",
         epilog="""
 Examples:
-  %(prog)s --year 2024                          # Generate statistics for 2024
-  %(prog)s --year 2023 --database custom.db    # Use custom database file
-  %(prog)s --year 2022 --debug                  # Show detailed CVE listings for each severity
+  %(prog)s --year 2024                                        # Generate statistics for 2024
+  %(prog)s --year 2023 --database custom.db                  # Use custom database file
+  %(prog)s --year 2022 --debug                                # Show detailed CVE listings for each severity
+  %(prog)s --year 2024 --product "Red Hat Enterprise Linux"  # Filter by product name
+  %(prog)s --year 2024 --cpe "cpe:/o:redhat:enterprise_linux" # Filter by CPE identifier
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -642,11 +754,27 @@ Examples:
         help='Show detailed CVE listings for each severity level'
     )
 
+    parser.add_argument(
+        '--product', '-p',
+        help='Filter results by product name (supports partial matches)'
+    )
+
+    parser.add_argument(
+        '--cpe',
+        help='Filter results by CPE (supports partial matches)'
+    )
+
     args = parser.parse_args()
 
     # Validate year
     if args.year < 1999 or args.year > 2030:
         print(f"❌ Invalid year: {args.year}. Please use a reasonable year (1999-2030)")
+        sys.exit(1)
+
+    # Validate that only one of --product or --cpe is used
+    if args.product and args.cpe:
+        print("❌ Error: Only one filter can be used at a time. You specified both --product and --cpe.")
+        print("Please use only one of --product or --cpe.")
         sys.exit(1)
 
     # Connect to database
@@ -655,47 +783,64 @@ Examples:
     try:
         print(f"🗄️  Database: {args.database}")
         print(f"📅 Generating statistics for year: {args.year}")
+        
+        # Show filtering criteria if specified
+        filter_info = []
+        if args.product:
+            filter_info.append(f"product: '{args.product}'")
+        if args.cpe:
+            filter_info.append(f"CPE: '{args.cpe}'")
+        
+        if filter_info:
+            print(f"🔍 Filtering by: {', '.join(filter_info)}")
 
         # Get days of risk statistics
-        risk_stats = get_days_of_risk_stats(conn, args.year)
+        risk_stats = get_days_of_risk_stats(conn, args.year, args.product, args.cpe)
 
         # 1. CVEs affecting products (with days of risk)
-        product_severity_counts, product_total = get_cves_affecting_products(conn, args.year)
+        product_severity_counts, product_total = get_cves_affecting_products(conn, args.year, args.product, args.cpe)
+        
+        title_suffix = ""
+        if args.product:
+            title_suffix = f" (Product: {args.product})"
+        elif args.cpe:
+            title_suffix = f" (CPE: {args.cpe})"
+            
         format_severity_table(
             product_severity_counts,
-            f"CVEs Discovered in {args.year} That Actually Affect Products",
+            f"CVEs Discovered in {args.year} That Actually Affect Products{title_suffix}",
             risk_stats
         )
 
         # 2. CVEs NOT affecting products (no risk stats since they don't have errata)
-        no_product_severity_counts, no_product_total = get_cves_not_affecting_products(conn, args.year)
+        no_product_severity_counts, no_product_total = get_cves_not_affecting_products(conn, args.year, args.product, args.cpe)
         format_severity_table(
             no_product_severity_counts,
-            f"CVEs Discovered in {args.year} That Did NOT Affect Products"
+            f"CVEs Discovered in {args.year} That Did NOT Affect Products{title_suffix}"
         )
 
         # 3. Errata statistics
-        errata_severity_counts, errata_total = get_errata_statistics(conn, args.year)
+        errata_severity_counts, errata_total = get_errata_statistics(conn, args.year, args.product, args.cpe)
         format_severity_table(
             errata_severity_counts,
-            f"Errata Released in {args.year} (Aggregated by Highest Severity)"
+            f"Errata Released in {args.year} (Aggregated by Highest Severity){title_suffix}"
         )
 
         # 4. Top 10 CWEs
-        top_cwes = get_top_cwes(conn, args.year, 10)
+        top_cwes = get_top_cwes(conn, args.year, 10, args.product, args.cpe)
         format_cwe_table(
             top_cwes,
-            f"Top 10 CWEs (Common Weakness Enumerations) in {args.year}"
+            f"Top 10 CWEs (Common Weakness Enumerations) in {args.year}{title_suffix}"
         )
 
         # Debug output - detailed CVE listings
         if args.debug:
-            cve_details = get_cve_details_by_severity(conn, args.year)
+            cve_details = get_cve_details_by_severity(conn, args.year, args.product, args.cpe)
             format_cve_debug_output(cve_details, product_severity_counts, args.year)
 
         # Summary
         total_cves = product_total + no_product_total
-        unique_cwes = get_total_unique_cwes_count(conn, args.year)
+        unique_cwes = get_total_unique_cwes_count(conn, args.year, args.product, args.cpe)
         total_fixed_cves = sum(stats['count'] for stats in risk_stats.values())
 
         print(f"\n📈 Summary for {args.year}")
