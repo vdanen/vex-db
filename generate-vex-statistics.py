@@ -536,6 +536,84 @@ def get_cve_details_by_severity(conn, year, product=None, cpe=None):
     return dict(result)
 
 
+def get_outstanding_cves(conn, year, product=None, cpe=None):
+    """Get outstanding (unfixed) Critical, Important, and Moderate (CVSS ≥ 7.0) CVEs that affect products"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["c.public_date LIKE ?", "a.product IS NOT NULL", "a.product != ''"]
+    params = [f"{year}%"]
+    
+    if product:
+        where_conditions.append("a.product LIKE ?")
+        params.append(f"%{product}%")
+    
+    if cpe:
+        where_conditions.append("a.cpe LIKE ?")
+        params.append(f"%{cpe}%")
+
+    # Simple query: get all CVE and affects data, filter in Python
+    query = f"""
+    SELECT c.cve, c.public_date, c.severity, c.cvss_score, a.state, a.errata
+    FROM cve c
+    INNER JOIN affects a ON c.cve = a.cve
+    WHERE {' AND '.join(where_conditions)}
+    AND (
+        c.severity = 'Critical' OR
+        c.severity = 'Important' OR
+        (c.severity = 'Moderate' AND CAST(c.cvss_score AS REAL) >= 7.0)
+    )
+    ORDER BY c.cve, a.state
+    """
+
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    all_rows = cursor.fetchall()
+    
+    # Group by CVE and analyze in Python
+    cve_data = {}
+    for row in all_rows:
+        cve = row['cve']
+        if cve not in cve_data:
+            cve_data[cve] = {
+                'cve': cve,
+                'public_date': row['public_date'],
+                'severity': row['severity'],
+                'cvss_score': row['cvss_score'],
+                'states': set(),
+                'has_errata': False
+            }
+        
+        # Track states and errata
+        if row['state']:
+            cve_data[cve]['states'].add(row['state'])
+        if row['errata'] and row['errata'].strip():
+            cve_data[cve]['has_errata'] = True
+    
+    # Filter for outstanding CVEs
+    outstanding_cves = []
+    for cve_info in cve_data.values():
+        # Skip CVEs that are only 'not_affected'
+        if cve_info['states'] == {'not_affected'}:
+            continue
+            
+        # Skip CVEs that have errata (are fixed)
+        if cve_info['has_errata']:
+            continue
+            
+        # This is an outstanding CVE
+        outstanding_cves.append({
+            'cve': cve_info['cve'],
+            'public_date': cve_info['public_date'],
+            'severity': cve_info['severity'],
+            'cvss_score': cve_info['cvss_score']
+        })
+    
+    # Sort by severity (Critical > Important > Moderate) and then by CVE
+    severity_order = {'Critical': 0, 'Important': 1, 'Moderate': 2}
+    outstanding_cves.sort(key=lambda x: (severity_order.get(x['severity'], 3), x['cve']))
+    
+    return outstanding_cves
+
+
 def format_severity_table(severity_counts, title, risk_stats=None):
     """Format severity statistics as a table with optional days of risk data"""
     print(f"\n📊 {title}")
@@ -611,6 +689,54 @@ def format_cwe_table(cwe_data, title):
 
     print("-" * 40)
     print(f"{'':>18} {total_cves:<8} {'100.0%':>12}")
+
+
+def format_outstanding_cves(outstanding_cves, year, title_suffix=""):
+    """Format outstanding CVEs as a table"""
+    if not outstanding_cves:
+        print(f"\n🎉 No outstanding Critical, Important, or Moderate (CVSS ≥ 7.0) CVEs found for {year}!")
+        return
+    
+    print(f"\n🚨 Outstanding CVEs in {year}{title_suffix}")
+    print("=" * 85)
+    print(f"{'CVE':<15} {'Severity':<10} {'CVSS':<6} {'Public Date':<12} {'Days Outstanding':<16}")
+    print("-" * 85)
+    
+    from datetime import datetime
+    today = datetime.now()
+    
+    # Group by severity for cleaner display
+    current_severity = None
+    for cve_info in outstanding_cves:
+        cve = cve_info['cve']
+        severity = cve_info['severity']
+        cvss_score = cve_info['cvss_score'] or 'N/A'
+        public_date = cve_info['public_date']
+        
+        # Calculate days outstanding
+        days_outstanding = 'N/A'
+        if public_date:
+            try:
+                pub_date_obj = parse_public_date(public_date)
+                if pub_date_obj:
+                    days_outstanding = (today - pub_date_obj).days
+            except:
+                pass
+        
+        # Add severity separator
+        if current_severity != severity:
+            if current_severity is not None:
+                print()  # Add blank line between severity groups
+            current_severity = severity
+        
+        # Format CVSS score
+        cvss_display = f"{cvss_score}" if cvss_score != 'N/A' else 'N/A'
+        days_display = f"{days_outstanding}" if days_outstanding != 'N/A' else 'N/A'
+        
+        print(f"{cve:<15} {severity:<10} {cvss_display:<6} {public_date:<12} {days_display:<16}")
+    
+    print("-" * 85)
+    print(f"Total outstanding CVEs: {len(outstanding_cves)}")
 
 
 def format_cve_debug_output(cve_details, severity_counts, year):
@@ -727,6 +853,8 @@ Examples:
   %(prog)s --year 2022 --debug                                # Show detailed CVE listings for each severity
   %(prog)s --year 2024 --product "Red Hat Enterprise Linux"  # Filter by product name
   %(prog)s --year 2024 --cpe "cpe:/o:redhat:enterprise_linux" # Filter by CPE identifier
+  %(prog)s --year 2024 --outstanding                          # Show outstanding unfixed CVEs
+  %(prog)s --year 2024 --product "RHEL" --outstanding         # Show outstanding CVEs for specific product
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -758,6 +886,12 @@ Examples:
     parser.add_argument(
         '--cpe',
         help='Filter results by CPE (supports partial matches)'
+    )
+
+    parser.add_argument(
+        '--outstanding',
+        action='store_true',
+        help='Show outstanding (unfixed) Critical, Important, and Moderate (CVSS ≥ 7.0) CVEs that affect products'
     )
 
     args = parser.parse_args()
@@ -833,6 +967,11 @@ Examples:
         if args.debug:
             cve_details = get_cve_details_by_severity(conn, args.year, args.product, args.cpe)
             format_cve_debug_output(cve_details, product_severity_counts, args.year)
+
+        # Outstanding CVEs - only show when requested
+        if args.outstanding:
+            outstanding_cves = get_outstanding_cves(conn, args.year, args.product, args.cpe)
+            format_outstanding_cves(outstanding_cves, args.year, title_suffix)
 
         # Summary
         total_cves = product_total + no_product_total
