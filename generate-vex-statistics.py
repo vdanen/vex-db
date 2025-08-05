@@ -197,32 +197,28 @@ def get_cves_affecting_products(conn, year, product=None, cpe=None):
 
 
 def get_cves_not_affecting_products(conn, year, product=None, cpe=None):
-    """Get CVEs from a specific year that do NOT affect any products, grouped by severity"""
-    # Note: When filtering by product/CPE, this function becomes less meaningful
-    # since we're looking for CVEs that DON'T affect products, but we're filtering BY product/CPE
-    # We'll still apply the filters for consistency, but results may be empty or unexpected
-    where_conditions = ["c.public_date LIKE ?"]
+    """Get CVEs from a specific year that are marked as only 'not_affected' for the specified product/CPE, grouped by severity"""
+    # Build WHERE conditions for product/CPE filtering
+    where_conditions = ["c.public_date LIKE ?", "a.product IS NOT NULL", "a.product != ''"]
     params = [f"{year}%"]
     
-    subquery_conditions = ["product IS NOT NULL", "product != ''"]
-    
     if product:
-        subquery_conditions.append("product LIKE ?")
+        where_conditions.append("a.product LIKE ?")
         params.append(f"%{product}%")
     
     if cpe:
-        subquery_conditions.append("cpe LIKE ?")  
+        where_conditions.append("a.cpe LIKE ?")
         params.append(f"%{cpe}%")
-    
+
+    # Get CVEs that are marked as ONLY 'not_affected' across all matching records
     query = f"""
-    SELECT DISTINCT c.cve, c.severity
+    SELECT c.cve, c.severity
     FROM cve c
+    INNER JOIN affects a ON c.cve = a.cve
     WHERE {' AND '.join(where_conditions)}
-    AND c.cve NOT IN (
-        SELECT DISTINCT cve
-        FROM affects
-        WHERE {' AND '.join(subquery_conditions)}
-    )
+    GROUP BY c.cve, c.severity
+    HAVING COUNT(*) = COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END)
+    AND COUNT(CASE WHEN a.state = 'not_affected' THEN 1 END) > 0
     """
 
     cursor = conn.cursor()
@@ -812,11 +808,11 @@ Examples:
             risk_stats
         )
 
-        # 2. CVEs NOT affecting products (no risk stats since they don't have errata)
+        # 2. CVEs marked as not affecting products (no risk stats since they don't have errata)
         no_product_severity_counts, no_product_total = get_cves_not_affecting_products(conn, args.year, args.product, args.cpe)
         format_severity_table(
             no_product_severity_counts,
-            f"CVEs Discovered in {args.year} That Did NOT Affect Products{title_suffix}"
+            f"CVEs Discovered in {args.year} Marked as NOT Affecting Products{title_suffix}"
         )
 
         # 3. Errata statistics
@@ -847,7 +843,7 @@ Examples:
         print("=" * 40)
         print(f"Total CVEs discovered:           {total_cves:>6}")
         print(f"  - Actually affecting products: {product_total:>6}")
-        print(f"  - Not affecting products:      {no_product_total:>6}")
+        print(f"  - Marked as not affecting:     {no_product_total:>6}")
         print(f"CVEs fixed with errata:          {total_fixed_cves:>6}")
         print(f"Total errata released:           {errata_total:>6}")
         print(f"Unique CWEs identified:          {unique_cwes:>6}")
