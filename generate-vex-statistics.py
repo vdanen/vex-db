@@ -710,7 +710,7 @@ def format_outstanding_cves(outstanding_cves, year, title_suffix=""):
         print(f"\n🎉 No outstanding Critical, Important, or Moderate (CVSS ≥ 7.0) CVEs found for {year}!")
         return
     
-    print(f"\n🚨 Outstanding CVEs in {year}{title_suffix}")
+    print(f"\n🚨 Outstanding CVEs (Critical, Important, Moderate >= CVSS 7.0) in {year}{title_suffix}")
     print("=" * 85)
     print(f"{'CVE':<15} {'Severity':<10} {'CVSS':<6} {'Public Date':<12} {'Days Outstanding':<16}")
     print("-" * 85)
@@ -1235,7 +1235,7 @@ def launch_web_dashboard(database_path):
             
             <div id="outstanding-section" style="display: none;">
                 <div class="stat-card">
-                    <h3>🚨 Outstanding CVEs</h3>
+                    <h3>🚨 Outstanding CVEs (Critical, Important, Moderate >= CVSS 7.0)</h3>
                     <div id="outstanding-content"></div>
                 </div>
             </div>
