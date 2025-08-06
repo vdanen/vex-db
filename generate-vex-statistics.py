@@ -1111,6 +1111,9 @@ def launch_web_dashboard(database_path):
         <div class="header">
             <h1>🛡️ VEX Statistics Dashboard</h1>
             <p>Interactive CVE and VEX data analysis</p>
+            <p style="font-size: 12px; color: #6c757d; margin-top: 5px;">
+                💡 Tip: URLs are automatically updated - bookmark or share your current view!
+            </p>
         </div>
         
         <div class="controls">
@@ -1209,7 +1212,7 @@ def launch_web_dashboard(database_path):
         document.addEventListener('DOMContentLoaded', function() {
             loadProducts();
             loadCPEs();
-            loadData();
+            loadFromURL();
         });
         
         // Handle filter type change
@@ -1247,11 +1250,84 @@ def launch_web_dashboard(database_path):
             }
         }
         
+        function updateURL() {
+            const year = document.getElementById('year').value;
+            const filterType = document.getElementById('filter-type').value;
+            const product = filterType === 'product' ? document.getElementById('product').value : '';
+            const cpe = filterType === 'cpe' ? document.getElementById('cpe').value : '';
+            
+            const params = new URLSearchParams();
+            params.set('year', year);
+            
+            if (product) {
+                params.set('filter', 'product');
+                params.set('value', product);
+            } else if (cpe) {
+                params.set('filter', 'cpe');
+                params.set('value', cpe);
+            }
+            
+            const newURL = window.location.pathname + '?' + params.toString();
+            window.history.replaceState({}, '', newURL);
+        }
+        
+        function loadFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            
+            // Set year
+            const year = params.get('year');
+            if (year) {
+                document.getElementById('year').value = year;
+            }
+            
+            // Set filter
+            const filter = params.get('filter');
+            const value = params.get('value');
+            
+            if (filter && value) {
+                document.getElementById('filter-type').value = filter;
+                
+                // Trigger filter type change to show appropriate dropdown
+                const event = new Event('change');
+                document.getElementById('filter-type').dispatchEvent(event);
+                
+                // Wait for dropdowns to load, then set the value
+                setTimeout(() => {
+                    if (filter === 'product') {
+                        const productSelect = document.getElementById('product');
+                        // Check if the option exists, if not add it temporarily
+                        if (![...productSelect.options].some(opt => opt.value === value)) {
+                            const option = new Option(value, value, true, true);
+                            productSelect.add(option);
+                        }
+                        productSelect.value = value;
+                    } else if (filter === 'cpe') {
+                        const cpeSelect = document.getElementById('cpe');
+                        // Check if the option exists, if not add it temporarily
+                        if (![...cpeSelect.options].some(opt => opt.value === value)) {
+                            const option = new Option(value, value, true, true);
+                            cpeSelect.add(option);
+                        }
+                        cpeSelect.value = value;
+                    }
+                    
+                    // Load data after setting all parameters
+                    loadData();
+                }, 500);
+            } else {
+                // No filter parameters, just load data
+                loadData();
+            }
+        }
+
         async function loadData() {
             const year = document.getElementById('year').value;
             const filterType = document.getElementById('filter-type').value;
             const product = filterType === 'product' ? document.getElementById('product').value : '';
             const cpe = filterType === 'cpe' ? document.getElementById('cpe').value : '';
+            
+            // Update URL to reflect current state
+            updateURL();
             
             document.getElementById('loading').style.display = 'block';
             document.getElementById('content').style.display = 'none';
@@ -1552,9 +1628,9 @@ def main():
         epilog="""
 Examples:
   %(prog)s --year 2024                                        # Generate statistics for 2024
-  %(prog)s --year 2023 --database custom.db                  # Use custom database file
+  %(prog)s --year 2023 --database custom.db                   # Use custom database file
   %(prog)s --year 2022 --debug                                # Show detailed CVE listings for each severity
-  %(prog)s --year 2024 --product "Red Hat Enterprise Linux"  # Filter by product name
+  %(prog)s --year 2024 --product "Red Hat Enterprise Linux"   # Filter by product name
   %(prog)s --year 2024 --cpe "cpe:/o:redhat:enterprise_linux" # Filter by CPE identifier
   %(prog)s --year 2024 --outstanding                          # Show outstanding unfixed CVEs
   %(prog)s --year 2024 --product "RHEL" --outstanding         # Show outstanding CVEs for specific product
