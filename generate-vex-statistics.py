@@ -1104,6 +1104,43 @@ def launch_web_dashboard(database_path):
         .severity-table .number-cell {
             text-align: right;
         }
+        .autocomplete-container {
+            position: relative;
+        }
+        .autocomplete-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-top: none;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+        }
+        .autocomplete-suggestion {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+        }
+        .autocomplete-suggestion:hover,
+        .autocomplete-suggestion.highlighted {
+            background-color: #f8f9fa;
+        }
+        .autocomplete-suggestion:last-child {
+            border-bottom: none;
+        }
+        .autocomplete-suggestion .product-name {
+            font-weight: bold;
+            color: #495057;
+        }
+        .autocomplete-suggestion .cpe-id {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 2px;
+        }
     </style>
 </head>
 <body>
@@ -1112,7 +1149,7 @@ def launch_web_dashboard(database_path):
             <h1>🛡️ VEX Statistics Dashboard</h1>
             <p>Interactive CVE and VEX data analysis</p>
             <p style="font-size: 12px; color: #6c757d; margin-top: 5px;">
-                💡 Tip: URLs are automatically updated - bookmark or share your current view!
+                💡 Tips: Start typing to filter products/CPEs • URLs auto-update for bookmarking • Use ↑↓ keys to navigate suggestions
             </p>
         </div>
         
@@ -1131,15 +1168,17 @@ def launch_web_dashboard(database_path):
             </div>
             <div class="control-group" id="product-group" style="display: none;">
                 <label for="product">Product:</label>
-                <select id="product">
-                    <option value="">Select Product...</option>
-                </select>
+                <div class="autocomplete-container">
+                    <input type="text" id="product" placeholder="Start typing product name..." autocomplete="off">
+                    <div id="product-suggestions" class="autocomplete-suggestions"></div>
+                </div>
             </div>
             <div class="control-group" id="cpe-group" style="display: none;">
                 <label for="cpe">CPE:</label>
-                <select id="cpe">
-                    <option value="">Select CPE...</option>
-                </select>
+                <div class="autocomplete-container">
+                    <input type="text" id="cpe" placeholder="Start typing CPE identifier..." autocomplete="off">
+                    <div id="cpe-suggestions" class="autocomplete-suggestions"></div>
+                </div>
             </div>
             <div class="control-group">
                 <button onclick="loadData()">Load Statistics</button>
@@ -1208,10 +1247,15 @@ def launch_web_dashboard(database_path):
         let currentData = null;
         let showingOutstanding = false;
         
+        // Global data storage
+        let allProducts = [];
+        let allCPEs = [];
+        
         // Load initial data
         document.addEventListener('DOMContentLoaded', function() {
             loadProducts();
             loadCPEs();
+            setupAutocomplete();
             loadFromURL();
         });
         
@@ -1220,17 +1264,26 @@ def launch_web_dashboard(database_path):
             const filterType = this.value;
             document.getElementById('product-group').style.display = filterType === 'product' ? 'block' : 'none';
             document.getElementById('cpe-group').style.display = filterType === 'cpe' ? 'block' : 'none';
+            
+            // Clear the other input when switching
+            if (filterType === 'product') {
+                document.getElementById('cpe').value = '';
+                hideSuggestions('cpe');
+            } else if (filterType === 'cpe') {
+                document.getElementById('product').value = '';
+                hideSuggestions('product');
+            } else {
+                document.getElementById('product').value = '';
+                document.getElementById('cpe').value = '';
+                hideSuggestions('product');
+                hideSuggestions('cpe');
+            }
         });
         
         async function loadProducts() {
             try {
                 const response = await fetch('/api/products');
-                const products = await response.json();
-                const select = document.getElementById('product');
-                select.innerHTML = '<option value="">Select Product...</option>';
-                products.forEach(product => {
-                    select.innerHTML += `<option value="${product}">${product}</option>`;
-                });
+                allProducts = await response.json();
             } catch (error) {
                 console.error('Error loading products:', error);
             }
@@ -1239,14 +1292,140 @@ def launch_web_dashboard(database_path):
         async function loadCPEs() {
             try {
                 const response = await fetch('/api/cpes');
-                const cpes = await response.json();
-                const select = document.getElementById('cpe');
-                select.innerHTML = '<option value="">Select CPE...</option>';
-                cpes.forEach(item => {
-                    select.innerHTML += `<option value="${item.cpe}">${item.product} - ${item.cpe}</option>`;
-                });
+                allCPEs = await response.json();
             } catch (error) {
                 console.error('Error loading CPEs:', error);
+            }
+        }
+        
+        function setupAutocomplete() {
+            // Product autocomplete
+            const productInput = document.getElementById('product');
+            const productSuggestions = document.getElementById('product-suggestions');
+            
+            productInput.addEventListener('input', function() {
+                const query = this.value.toLowerCase().trim();
+                if (query.length < 2) {
+                    hideSuggestions('product');
+                    return;
+                }
+                
+                const filtered = allProducts.filter(product => 
+                    product.toLowerCase().includes(query)
+                ).slice(0, 10); // Limit to 10 suggestions
+                
+                showSuggestions('product', filtered.map(product => ({
+                    display: product,
+                    value: product
+                })));
+            });
+            
+            // Add keyboard navigation for product input
+            productInput.addEventListener('keydown', function(e) {
+                handleKeyboardNavigation(e, 'product');
+            });
+            
+            // CPE autocomplete
+            const cpeInput = document.getElementById('cpe');
+            const cpeSuggestions = document.getElementById('cpe-suggestions');
+            
+            cpeInput.addEventListener('input', function() {
+                const query = this.value.toLowerCase().trim();
+                if (query.length < 3) {
+                    hideSuggestions('cpe');
+                    return;
+                }
+                
+                const filtered = allCPEs.filter(item => 
+                    item.cpe.toLowerCase().includes(query) || 
+                    item.product.toLowerCase().includes(query)
+                ).slice(0, 10); // Limit to 10 suggestions
+                
+                showSuggestions('cpe', filtered.map(item => ({
+                    display: `<div class="product-name">${item.product}</div><div class="cpe-id">${item.cpe}</div>`,
+                    value: item.cpe
+                })));
+            });
+            
+            // Add keyboard navigation for CPE input
+            cpeInput.addEventListener('keydown', function(e) {
+                handleKeyboardNavigation(e, 'cpe');
+            });
+            
+            // Hide suggestions when clicking outside
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.autocomplete-container')) {
+                    hideSuggestions('product');
+                    hideSuggestions('cpe');
+                }
+            });
+        }
+        
+        function showSuggestions(type, suggestions) {
+            const suggestionsDiv = document.getElementById(`${type}-suggestions`);
+            
+            if (suggestions.length === 0) {
+                hideSuggestions(type);
+                return;
+            }
+            
+            suggestionsDiv.innerHTML = suggestions.map(item => 
+                `<div class="autocomplete-suggestion" data-value="${item.value}">${item.display}</div>`
+            ).join('');
+            
+            suggestionsDiv.style.display = 'block';
+            
+            // Add click handlers to suggestions
+            suggestionsDiv.querySelectorAll('.autocomplete-suggestion').forEach(suggestion => {
+                suggestion.addEventListener('click', function() {
+                    const input = document.getElementById(type);
+                    input.value = this.dataset.value;
+                    hideSuggestions(type);
+                });
+            });
+        }
+        
+        function hideSuggestions(type) {
+            const suggestionsDiv = document.getElementById(`${type}-suggestions`);
+            suggestionsDiv.style.display = 'none';
+        }
+        
+        function handleKeyboardNavigation(e, type) {
+            const suggestionsDiv = document.getElementById(`${type}-suggestions`);
+            const suggestions = suggestionsDiv.querySelectorAll('.autocomplete-suggestion');
+            const input = document.getElementById(type);
+            
+            if (suggestions.length === 0) return;
+            
+            let highlighted = suggestionsDiv.querySelector('.highlighted');
+            let currentIndex = highlighted ? Array.from(suggestions).indexOf(highlighted) : -1;
+            
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    if (highlighted) highlighted.classList.remove('highlighted');
+                    currentIndex = (currentIndex + 1) % suggestions.length;
+                    suggestions[currentIndex].classList.add('highlighted');
+                    break;
+                    
+                case 'ArrowUp':
+                    e.preventDefault();
+                    if (highlighted) highlighted.classList.remove('highlighted');
+                    currentIndex = currentIndex <= 0 ? suggestions.length - 1 : currentIndex - 1;
+                    suggestions[currentIndex].classList.add('highlighted');
+                    break;
+                    
+                case 'Enter':
+                    e.preventDefault();
+                    if (highlighted) {
+                        input.value = highlighted.dataset.value;
+                        hideSuggestions(type);
+                    }
+                    break;
+                    
+                case 'Escape':
+                    hideSuggestions(type);
+                    break;
             }
         }
         
@@ -1291,24 +1470,12 @@ def launch_web_dashboard(database_path):
                 const event = new Event('change');
                 document.getElementById('filter-type').dispatchEvent(event);
                 
-                // Wait for dropdowns to load, then set the value
+                // Wait for data to load, then set the value
                 setTimeout(() => {
                     if (filter === 'product') {
-                        const productSelect = document.getElementById('product');
-                        // Check if the option exists, if not add it temporarily
-                        if (![...productSelect.options].some(opt => opt.value === value)) {
-                            const option = new Option(value, value, true, true);
-                            productSelect.add(option);
-                        }
-                        productSelect.value = value;
+                        document.getElementById('product').value = value;
                     } else if (filter === 'cpe') {
-                        const cpeSelect = document.getElementById('cpe');
-                        // Check if the option exists, if not add it temporarily
-                        if (![...cpeSelect.options].some(opt => opt.value === value)) {
-                            const option = new Option(value, value, true, true);
-                            cpeSelect.add(option);
-                        }
-                        cpeSelect.value = value;
+                        document.getElementById('cpe').value = value;
                     }
                     
                     // Load data after setting all parameters
