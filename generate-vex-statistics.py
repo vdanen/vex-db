@@ -934,7 +934,7 @@ def get_available_cpes(conn):
     return [{'cpe': row['cpe'], 'product': row['product']} for row in cursor.fetchall()]
 
 
-def launch_web_dashboard(database_path):
+def launch_web_dashboard(database_path, port=5000):
     """Launch the web dashboard"""
     try:
         from flask import Flask, render_template_string, request, jsonify
@@ -1780,11 +1780,11 @@ def launch_web_dashboard(database_path):
     
     print("🚀 Starting VEX Statistics Dashboard...")
     print(f"📊 Database: {database_path}")
-    print("🌐 Open your browser to: http://localhost:5000")
+    print(f"🌐 Open your browser to: http://localhost:{port}")
     print("⏹️  Press Ctrl+C to stop the server")
     
     try:
-        app.run(host='0.0.0.0', port=5000, debug=False)
+        app.run(host='0.0.0.0', port=port, debug=False)
     except KeyboardInterrupt:
         print("\n👋 Dashboard stopped.")
 
@@ -1802,6 +1802,7 @@ Examples:
   %(prog)s --year 2024 --outstanding                          # Show outstanding unfixed CVEs
   %(prog)s --year 2024 --product "RHEL" --outstanding         # Show outstanding CVEs for specific product
   %(prog)s --interactive                                      # Launch web dashboard (requires Flask)
+  %(prog)s --interactive --port 8080                          # Launch web dashboard on custom port
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1846,11 +1847,18 @@ Examples:
         help='Launch interactive web dashboard'
     )
 
+    parser.add_argument(
+        '--port',
+        type=int,
+        default=5000,
+        help='Port for the web dashboard (default: 5000, only used with --interactive)'
+    )
+
     args = parser.parse_args()
 
     # Handle interactive mode first (doesn't need year validation)
     if args.interactive:
-        launch_web_dashboard(args.database)
+        launch_web_dashboard(args.database, args.port)
         return
 
     # Validate year is required for CLI mode
@@ -1981,4 +1989,4 @@ Examples:
 
 
 if __name__ == "__main__":
-    main() 
+    main()
