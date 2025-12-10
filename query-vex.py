@@ -20,7 +20,7 @@ def connect_to_database(db_path="vex.db"):
         print(f"❌ Error connecting to database: {e}")
         sys.exit(1)
 
-def build_query(component=None, year=None, exact=False, product=None, cpe=None, purl=None, severity=None):
+def build_query(component=None, year=None, exact=False, product=None, cpe=None, purl=None, severity=None, cve_id=None):
     """Build SQL query based on parameters"""
     base_query = """
     SELECT 
@@ -35,7 +35,8 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
         c.public_date,
         c.cvss_score,
         c.severity,
-        c.cwe
+        c.cwe,
+        c.description
     FROM affects a
     LEFT JOIN cve c ON a.cve = c.cve
     """
@@ -85,6 +86,10 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
         where_conditions.append("c.severity = ?")
         params.append(severity.capitalize())
 
+    if cve_id:
+        where_conditions.append("a.cve = ?")
+        params.append(cve_id.upper())
+
     # Add WHERE clause if any conditions exist
     if where_conditions:
         base_query += " WHERE " + " AND ".join(where_conditions)
@@ -93,10 +98,12 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
     
     return base_query, params
 
-def format_output(results, component, exact=False):
+def format_output(results, component, exact=False, cve_query=None):
     """Format query results for display"""
     if not results:
-        if component:
+        if cve_query:
+            print(f"🔍 No information found for CVE '{cve_query}'")
+        elif component:
             print(f"🔍 No CVEs found affecting component '{component}'")
         else:
             print(f"🔍 No CVEs found matching the specified criteria")
@@ -165,16 +172,35 @@ def format_output(results, component, exact=False):
     total_cves = len(results)
     unique_cves = len(set(row['cve'] for row in results))
     
-    # Display results summary
-    if component:
-        if exact:
-            print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (exact match)")
-        else:
-            print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (fuzzy match)")
-    else:
-        print(f"🔍 Found {total_cves} entries matching criteria ({unique_cves} unique CVEs)")
+    # Special handling for CVE-specific queries
+    if cve_query:
+        # Show CVE information prominently
+        first_result = dict_results[0]  # All results should be for the same CVE
+        print(f"🛡️  CVE INFORMATION: {first_result['cve']}")
+        print("=" * 80)
+        print(f"📅 Public Date: {first_result['public_date'] or 'N/A'}")
+        print(f"🔥 Severity: {first_result['severity'] or 'N/A'}")
+        print(f"📊 CVSS Score: {first_result['cvss_score'] or 'N/A'}")
+        print(f"🐛 CWE: {first_result['cwe'] or 'N/A'}")
 
-    print("=" * 80)
+        if first_result['description']:
+            desc = first_result['description']
+            if len(desc) > 200:
+                desc = desc[:200] + "..."
+            print(f"📝 Description: {desc}")
+
+        print(f"\n📦 AFFECTED PRODUCTS ({total_cves} product entries):")
+        print("=" * 80)
+    else:
+        # Display results summary for other queries
+        if component:
+            if exact:
+                print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (exact match)")
+            else:
+                print(f"🔍 Found {total_cves} entries for component '{component}' ({unique_cves} unique CVEs) (fuzzy match)")
+        else:
+            print(f"🔍 Found {total_cves} entries matching criteria ({unique_cves} unique CVEs)")
+        print("=" * 80)
     
     for product, entries in normalized_products.items():
         print(f"\n📦 {product} ({cpes[product]})")
@@ -250,6 +276,7 @@ def main():
         epilog="""NOTE: filters do not apply to JSON or CSV output formats.
 
 Examples:
+  %(prog)s --cve CVE-2022-0001                 # Show information for specific CVE
   %(prog)s --component mysql                    # Find all CVEs affecting mysql component
   %(prog)s --component mysql --severity low     # Find all CVEs affecting mysql component with low severity
   %(prog)s --component kernel --year 2024       # Find kernel CVEs from 2024
@@ -294,6 +321,11 @@ Examples:
         choices=['critical', 'important', 'moderate', 'low'],
         type=str.lower, # convert to lowercase
         help='Filter results by severity (e.g., "critical", "important", "moderate", "low")'
+    )
+
+    parser.add_argument(
+        '--cve',
+        help='Query information for a specific CVE ID (e.g., "CVE-2022-0001")'
     )
 
     parser.add_argument(
@@ -346,6 +378,14 @@ Examples:
         print(f"❌ Invalid year: {args.year}. Please use a reasonable year (1999-2030)")
         sys.exit(1)
     
+    # Validate CVE format
+    if args.cve:
+        import re
+        cve_pattern = r'^CVE-\d{4}-\d{4,}$'
+        if not re.match(cve_pattern, args.cve.upper()):
+            print(f"❌ Invalid CVE format: {args.cve}. Please use format 'CVE-YYYY-NNNN' (e.g., CVE-2022-0001)")
+            sys.exit(1)
+
     # Validate that only one of --product, --cpe, or --purl is used
     filter_args = [args.product, args.cpe, args.purl]
     filter_names = ['--product', '--cpe', '--purl']
@@ -357,10 +397,10 @@ Examples:
         sys.exit(1)
 
     # Validate that at least one filter is provided
-    all_filters = [args.component, args.product, args.cpe, args.purl, args.year]
+    all_filters = [args.component, args.product, args.cpe, args.purl, args.year, args.cve]
     if not any(all_filters):
         print("❌ Error: At least one filter must be specified.")
-        print("Use --component, --product, --cpe, --purl, or --year to filter results.")
+        print("Use --component, --product, --cpe, --purl, --cve, or --year to filter results.")
         sys.exit(1)
 
     # Connect to database
@@ -368,10 +408,12 @@ Examples:
     
     try:
         # Build and execute query
-        query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl, args.severity)
+        query, params = build_query(args.component, args.year, args.exact, args.product, args.cpe, args.purl, args.severity, args.cve)
         
         # Display search criteria
         search_criteria = []
+        if args.cve:
+            search_criteria.append(f"CVE: '{args.cve}'")
         if args.component:
             search_criteria.append(f"component: '{args.component}'")
         if args.year:
@@ -416,7 +458,7 @@ Examples:
                     writer.writerow(row_dict)
             print(output.getvalue())
         else:
-            format_output(results, args.component, args.exact)
+            format_output(results, args.component, args.exact, args.cve)
             
     except sqlite3.Error as e:
         print(f"❌ Database query error: {e}")
