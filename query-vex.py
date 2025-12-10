@@ -83,8 +83,17 @@ def build_query(component=None, year=None, exact=False, product=None, cpe=None, 
             params.append(f"%{purl}%")
 
     if severity:
-        where_conditions.append("c.severity = ?")
-        params.append(severity.capitalize())
+        if severity.lower() == 'unknown':
+            # Map 'unknown' to 'None' in the database (how unknown severity is stored)
+            where_conditions.append("c.severity = ?")
+            params.append('None')
+        elif severity.lower() == 'none':
+            # Direct match for 'None' in the database
+            where_conditions.append("c.severity = ?")
+            params.append('None')
+        else:
+            where_conditions.append("c.severity = ?")
+            params.append(severity.capitalize())
 
     if cve_id:
         where_conditions.append("a.cve = ?")
@@ -251,6 +260,11 @@ def format_output(results, component, exact=False, cve_query=None):
 
             cvss_string = f"CVSS: {cvss_score} ({severity})"
 
+            # Truncate state_string to fit fixed width column (35 chars)
+            max_state_width = 35
+            if len(state_string) > max_state_width:
+                state_string = state_string[:max_state_width-3] + "..."
+
             components_list = []
             if components:
                 c = components.split(',')
@@ -266,7 +280,7 @@ def format_output(results, component, exact=False, cve_query=None):
             cmps = ', '.join(components_list)
             if len(cmps) > 100:
                 cmps = cmps[:100] + '...'
-            print(f"  {state_icon:<3} {cve:<15} | 📅 {public_date} | {state_string:<30} | {cvss_string:<21} | {cwe:<20} | {cmps}")
+            print(f"  {state_icon:<3} {cve:<15} | 📅 {public_date} | {state_string:<35} | {cvss_string:<21} | {cwe:<20} | {cmps}")
         print()
 
 
@@ -279,6 +293,7 @@ Examples:
   %(prog)s --cve CVE-2022-0001                 # Show information for specific CVE
   %(prog)s --component mysql                    # Find all CVEs affecting mysql component
   %(prog)s --component mysql --severity low     # Find all CVEs affecting mysql component with low severity
+  %(prog)s --year 2025 --severity unknown      # Find all CVEs from 2025 with unknown severity
   %(prog)s --component kernel --year 2024       # Find kernel CVEs from 2024
   %(prog)s --product "Red Hat Enterprise Linux" # Find all CVEs for a product
   %(prog)s --year 2024                          # Find all CVEs from 2024
@@ -318,9 +333,9 @@ Examples:
 
     parser.add_argument(
         '--severity', '-s',
-        choices=['critical', 'important', 'moderate', 'low'],
+        choices=['critical', 'important', 'moderate', 'low', 'unknown', 'none'],
         type=str.lower, # convert to lowercase
-        help='Filter results by severity (e.g., "critical", "important", "moderate", "low")'
+        help='Filter results by severity (e.g., "critical", "important", "moderate", "low", "unknown", "none")'
     )
 
     parser.add_argument(
