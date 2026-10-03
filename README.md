@@ -1,294 +1,125 @@
-# VEX Database Project
+# VEX Database
 
-This project downloads and processes VEX (Vulnerability Exploitability eXchange) files from Red Hat's security data, extracts vulnerability information using the `vex-reader` Python module, and stores the data in a configurable database or uploads it as a dataset to HuggingFace Hub.
+A toolkit for downloading, storing, querying, and analyzing [Red Hat VEX](https://security.access.redhat.com/data/csaf/v2/vex/) (Vulnerability Exploitability eXchange) data. Import VEX files into a local SQLite database, query them from the command line, generate statistics, or upload structured datasets to HuggingFace Hub.
 
-## Features
+## Quick Start
 
-- **Downloads VEX files** from Red Hat's CSAF v2 VEX archive
-- **Parses VEX data** using the `vex-reader` Python module
-- **Extracts comprehensive data** including:
-  - CVE ID and details
-  - CVSS scores and metrics
-  - CWE identifier(s)
-  - Vulnerability descriptions and statements
-  - Affected products and components
-  - Vulnerability status (fixed, known_affected, known_not_affected)
-- **Dual output options**:
-  - **Database storage**: PostgreSQL, MySQL, and SQLite support
-  - **HuggingFace datasets**: Upload structured datasets for AI/ML use cases
-- **Database schema** optimized for VEX data structure
-- **Command line interface** for single file and batch processing
+```bash
+git clone <repository-url>
+cd vex-db
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
-## Database Schema
+### Initialize the Database
 
-### CVE Table
-- `cve` (VARCHAR): CVE identifier (primary key)
-- `cvss_score` (FLOAT): CVSS v3.1 base score
-- `cvss_metrics` (VARCHAR): CVSS vector string
-- `severity` (VARCHAR): Vulnerability severity (Low, Medium, High, Critical)
-- `cwe` (TEXT): CWE identifier(s)
-- `public_date` (TEXT): Public disclosure date
-- `updated_date` (TEXT): Last update date
-- `description` (TEXT): Vulnerability description
-- `mitigation` (TEXT): Mitigation information
-- `statement` (TEXT): VEX statement
+The `initialize.sh` script downloads the latest VEX archive from Red Hat, creates the SQLite database, and imports everything:
 
-### Affects Table
-- `cve` (VARCHAR): CVE identifier (foreign key)
-- `product` (TEXT): Affected product name
-- `cpe` (TEXT): Common Platform Enumeration identifier
-- `purl` (TEXT): Package URL
-- `errata` (TEXT): Errata/advisory identifier
-- `release_date` (TEXT): Fix release date
-- `state` (TEXT): Status (fixed, affected, not_affected, wontfix)
-- `reason` (TEXT): Reason for status
-- `components` (TEXT): Affected components
+```bash
+./initialize.sh
+```
 
-## HuggingFace Dataset Structure
+This takes a while on the first run (the archive is large). When it finishes you'll have a `vex.db` file ready to query.
 
-The HuggingFace datasets are uploaded as **two separate but related datasets** to work around schema limitations:
-
-- **`{repo-id}-cve`**: Contains CVE metadata (1 record per CVE)
-- **`{repo-id}-affects`**: Contains product/component relationships (multiple records per CVE)
-
-This structure maintains the relational integrity while being compatible with HuggingFace's dataset format requirements.
-
-### Example Dataset Names
-If you upload to `myorg/vex-security-data`, you'll get:
-- `myorg/vex-security-data-cve` - CVE information
-- `myorg/vex-security-data-affects` - Product relationships
-
-## Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone <repository-url>
-   cd vex-db
-   ```
-
-2. **Create virtual environment:**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Initialize database (for database usage):**
-   ```bash
-   ./initialize.sh
-   ```
+> **Updating:** Run `initialize.sh` again at any time to pull a fresh archive. It drops and recreates the tables, so you always get a clean import.
 
 ## Usage
 
-### Database Import (`import-vex-db.py`)
-
-Import VEX files into a database:
+### Query CVEs
 
 ```bash
-# Single file
-python import-vex-db.py cve-2022-48632.json
+# Look up a specific CVE
+python query-vex.py --cve CVE-2024-1234
 
-# Directory (recursive)
-python import-vex-db.py /path/to/vex/files/
+# Find CVEs affecting a component
+python query-vex.py --component openssl
 
-# Directory (non-recursive)
-python import-vex-db.py /path/to/vex/files/ --no-recursive
-
-# Custom database
-python import-vex-db.py /path/to/vex/files/ --database-url "postgresql://user:pass@host:port/db"
-
-# Continue on errors
-python import-vex-db.py /path/to/vex/files/ --continue-on-error
-```
-
-### HuggingFace Dataset Upload (`import-vex-dataset.py`)
-
-Process VEX files and upload to HuggingFace Hub:
-
-```bash
-# Single file (create new dataset)  
-python import-vex-dataset.py cve-2022-48632.json --repo-id "username/vex-dataset"
-
-# Directory (recursive)
-python import-vex-dataset.py /path/to/vex/files/ --repo-id "username/vex-dataset"
-
-# Update existing dataset with new VEX files
-python import-vex-dataset.py new-vex-files/ --repo-id "username/vex-dataset" --update-mode update
-
-# Append new data without replacing existing records
-python import-vex-dataset.py new-vex-files/ --repo-id "username/vex-dataset" --update-mode append
-
-# Replace entire dataset with new data
-python import-vex-dataset.py new-vex-files/ --repo-id "username/vex-dataset" --update-mode replace
-
-# Private dataset
-python import-vex-dataset.py /path/to/vex/files/ --repo-id "username/vex-dataset" --private
-
-# With authentication token
-python import-vex-dataset.py /path/to/vex/files/ --repo-id "username/vex-dataset" --token "hf_..."
-
-# Save locally before upload
-python import-vex-dataset.py /path/to/vex/files/ --repo-id "username/vex-dataset" --save-local "./dataset"
-```
-
-#### Update Modes
-
-The script supports three update modes when working with existing datasets:
-
-- **`update` (default)**: Updates existing CVE records and adds new ones. For existing CVEs, replaces all associated product relationships with new data.
-- **`append`**: Simply adds all new records to the existing dataset (may create duplicates).
-- **`replace`**: Completely replaces the existing dataset with new data.
-
-#### Dataset Update Workflow
-
-1. **Check if dataset exists**: Script automatically detects existing datasets
-2. **Load existing data**: Downloads current dataset if it exists
-3. **Merge data**: Combines new and existing data based on update mode
-4. **Remove duplicates**: Eliminates duplicate CVE records
-5. **Upload updated dataset**: Pushes merged dataset back to HuggingFace
-
-#### Authentication for HuggingFace
-
-Before uploading datasets, authenticate with HuggingFace:
-
-```bash
-# Option 1: Use CLI login
-huggingface-cli login
-
-# Option 2: Pass token directly
-python import-vex-dataset.py ... --token "hf_your_token_here"
-```
-
-### Query Database
-
-Query the database using the provided script:
-
-```bash
-# Query specific CVE
-python query-vex.py --cve CVE-2022-48632
-
-# Search by product
-python query-vex.py --product "Red Hat Enterprise Linux"
-
-# Search by severity
-python query-vex.py --severity "High"
-```
-
-### Using HuggingFace Dataset
-
-Once uploaded, use the datasets in your AI/ML projects:
-
-```python
-from datasets import load_dataset
-
-# Load the datasets (they are stored as separate repositories)
-cve_dataset = load_dataset("username/vex-dataset-cve")
-affects_dataset = load_dataset("username/vex-dataset-affects") 
-
-# Access the data (default split is 'train')
-cve_data = cve_dataset['train']
-affects_data = affects_dataset['train']
-
-print(f"Total CVEs: {len(cve_data)}")
-print(f"Total product relationships: {len(affects_data)}")
-
-# Query specific CVE
-cve_info = cve_data.filter(lambda x: x['cve'] == 'CVE-2022-48632')
-print(cve_info[0])
-
-# Get all products affected by a CVE
-affected_products = affects_data.filter(lambda x: x['cve'] == 'CVE-2022-48632')
-for product in affected_products:
-    print(f"Product: {product['product']}, State: {product['state']}")
+# Filter by product and year
+python query-vex.py --product "Red Hat Enterprise Linux" --year 2024
 
 # Filter by severity
-high_severity = cve_data.filter(lambda x: x['severity'] == 'High')
-print(f"High severity CVEs: {len(high_severity)}")
+python query-vex.py --severity critical --year 2025
 
-# Convert to pandas for analysis
-import pandas as pd
-cve_df = cve_data.to_pandas()
-affects_df = affects_data.to_pandas()
-
-# Join data for analysis
-merged_df = pd.merge(cve_df, affects_df, on='cve', how='inner')
-print(merged_df.head())
+# Output as JSON or CSV
+python query-vex.py --component kernel --format json
 ```
 
-## Database Configuration
+### Generate Statistics
 
-### SQLite (Default)
 ```bash
-python import-vex-db.py data/ --database-url "sqlite:///vex.db"
+# Severity breakdown, top CWEs, days-of-risk, and errata stats for a year
+python generate-vex-statistics.py --year 2024
+
+# Filter to a specific product
+python generate-vex-statistics.py --year 2024 --product "Red Hat Enterprise Linux"
+
+# Show outstanding unfixed CVEs (Critical, Important, Moderate ≥ CVSS 7.0)
+python generate-vex-statistics.py --year 2024 --outstanding
+
+# Launch the interactive web dashboard (requires Flask)
+python generate-vex-statistics.py --interactive
 ```
 
-### PostgreSQL
+### Import a Subset Manually
+
+If you already have VEX JSON files and just want to import them:
+
 ```bash
-python import-vex-db.py data/ --database-url "postgresql://user:password@localhost:5432/vex_db"
+# Create the tables (only needed once)
+sqlite3 vex.db < vex-db.sql
+
+# Import a single file
+python import-vex-db.py cve-2024-1234.json
+
+# Import a directory of files
+python import-vex-db.py ./vex-2024-10-01/
 ```
 
-### MySQL
-```bash
-python import-vex-db.py data/ --database-url "mysql+pymysql://user:password@localhost:3306/vex_db"
-```
+## Database Schema
 
-## Example Data Processing
+Two tables — `cve` for vulnerability metadata, `affects` for per-product status:
 
-The scripts process VEX files and extract:
-
-- **CVE metadata**: ID, CVSS scores, severity, CWEs, dates, descriptions
-- **Product relationships**: Which products are affected, fixed, or not affected
-- **Component details**: Specific software components and versions
-- **Advisory information**: Errata, release dates, mitigation details
-
-## Use Cases
-
-### Database Approach
-- **Enterprise security teams**: Query and analyze vulnerability data
-- **Compliance reporting**: Generate reports on security posture
-- **Integration**: Connect with existing security tools and workflows
-
-### HuggingFace Dataset Approach
-- **AI/ML research**: Train models on vulnerability data
-- **Natural language processing**: Analyze vulnerability descriptions
-- **Automated classification**: Build systems to categorize vulnerabilities
-- **Trend analysis**: Study vulnerability patterns over time
-- **Chatbots and Q&A systems**: Build AI assistants for security information
+| `cve` | | `affects` | |
+|---|---|---|---|
+| `cve` | CVE ID (PK) | `cve` | CVE ID (FK) |
+| `cvss_score` | CVSS v3 base score | `product` | Product name |
+| `cvss_metrics` | CVSS vector string | `cpe` | CPE identifier |
+| `severity` | Low / Moderate / Important / Critical | `purl` | Package URL |
+| `cwe` | CWE identifier(s) | `errata` | Advisory ID |
+| `public_date` | Disclosure date | `release_date` | Fix release date |
+| `updated_date` | Last updated | `state` | fixed / affected / not_affected / wontfix |
+| `description` | Vulnerability description | `reason` | Reason for status |
+| `mitigation` | Mitigation details | `components` | Affected components |
+| `statement` | Vendor statement | | |
 
 ## Project Structure
 
 ```
 vex-db/
-├── import-vex-db.py           # Database import script
-├── import-vex-dataset.py      # HuggingFace dataset upload script
-├── query-vex.py               # Database query script
-├── initialize.sh              # Database initialization
-├── vex-db.sql                 # Database schema
-├── requirements.txt           # Python dependencies
-├── README.md                  # This file
-└── test/                      # Test data
-    ├── cve-2022-48632.json   # Sample VEX file
-    └── run_tests.py          # Test suite
+├── initialize.sh               # Download, create DB, and import
+├── import-vex-db.py             # Import VEX JSON → SQLite
+├── import-vex-dataset.py        # Import VEX JSON → HuggingFace Hub
+├── query-vex.py                 # CLI queries against the database
+├── generate-vex-statistics.py   # Statistics & web dashboard
+├── vex-db.sql                   # Table definitions
+├── requirements.txt             # Python dependencies
+└── docs/
+    ├── sql.md                   # SQL schema details & advanced queries
+    └── huggingface.md           # HuggingFace dataset upload guide
 ```
 
-## Contributing
+## Further Reading
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Submit a pull request
+- **[docs/sql.md](docs/sql.md)** — SQL schema details, database configuration (PostgreSQL, MySQL), and example queries.
+- **[docs/huggingface.md](docs/huggingface.md)** — Uploading VEX data as HuggingFace datasets for AI/ML use cases.
 
 ## License
 
-This project is licensed under the GPLv3 License - see the LICENSE file for details.
+GPLv3 — see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- **Red Hat Security Team** for providing VEX data
-- **vex-reader** library for VEX parsing capabilities
-- **HuggingFace** for dataset hosting and AI/ML infrastructure
+- [Red Hat Product Security](https://www.redhat.com/en/blog/channel/security) for providing VEX data
+- [vex-reader](https://pypi.org/project/vex-reader/) for VEX parsing
+- [HuggingFace](https://huggingface.co/) for dataset hosting
