@@ -628,11 +628,20 @@ def get_outstanding_cves(conn, year, product=None, cpe=None):
 
 
 def get_monthly_cve_stats(conn, year, product=None, cpe=None):
-    """Get month-by-month new CVE discovery counts by severity"""
+    """Get month-by-month new CVE discovery and remediation counts by severity.
+    
+    A CVE is 'discovered' based on its public_date month.
+    A CVE is 'remediated' if it has at least one errata for the matching product/CPE.
+    CVEs that are ONLY marked 'not_affected' for the filtered product/CPE are excluded
+    (consistent with get_cves_affecting_products).
+    Returns {month: {severity: {'discovered': N, 'remediated': N}}}
+    """
     where_conditions = ["c.public_date LIKE ?"]
     params = [f"{year}%"]
 
     join_clause = ""
+    not_affected_exclusion = ""
+
     if product or cpe:
         join_clause = "INNER JOIN affects a ON c.cve = a.cve"
         where_conditions.extend(["a.product IS NOT NULL", "a.product != ''"])
@@ -643,30 +652,64 @@ def get_monthly_cve_stats(conn, year, product=None, cpe=None):
             where_conditions.append("a.cpe LIKE ?")
             params.append(f"%{cpe}%")
 
+        # Build the not_affected exclusion subquery using the same filters
+        na_conditions = ["c2.public_date LIKE ?", "a2.product IS NOT NULL", "a2.product != ''"]
+        if product:
+            na_conditions.append("a2.product LIKE ?")
+        if cpe:
+            na_conditions.append("a2.cpe LIKE ?")
+
+        not_affected_exclusion = f"""
+        AND c.cve NOT IN (
+            SELECT c2.cve
+            FROM cve c2
+            INNER JOIN affects a2 ON c2.cve = a2.cve
+            WHERE {' AND '.join(na_conditions)}
+            GROUP BY c2.cve
+            HAVING COUNT(*) = COUNT(CASE WHEN a2.state = 'not_affected' THEN 1 END)
+               AND COUNT(CASE WHEN a2.state = 'not_affected' THEN 1 END) > 0
+        )
+        """
+    else:
+        join_clause = "LEFT JOIN affects a ON c.cve = a.cve"
+
     query = f"""
     SELECT
         substr(c.public_date, 1, 7) as month,
         c.severity,
-        COUNT(DISTINCT c.cve) as count
+        COUNT(DISTINCT c.cve) as discovered,
+        COUNT(DISTINCT CASE WHEN a.errata IS NOT NULL AND a.errata != '' THEN c.cve END) as remediated
     FROM cve c
     {join_clause}
     WHERE {' AND '.join(where_conditions)}
+    {not_affected_exclusion}
     GROUP BY month, c.severity
     ORDER BY month, c.severity
     """
 
+    # Build params: main query params + subquery params (which mirror the filter params)
+    subquery_params = []
+    if product or cpe:
+        subquery_params.append(f"{year}%")
+        if product:
+            subquery_params.append(f"%{product}%")
+        if cpe:
+            subquery_params.append(f"%{cpe}%")
+
     cursor = conn.cursor()
-    cursor.execute(query, params)
+    cursor.execute(query, params + subquery_params)
     results = cursor.fetchall()
 
     monthly_data = {}
     for row in results:
         month = row['month']
         severity = row['severity'] or 'Unknown'
-        count = row['count']
         if month not in monthly_data:
             monthly_data[month] = {}
-        monthly_data[month][severity] = count
+        monthly_data[month][severity] = {
+            'discovered': row['discovered'],
+            'remediated': row['remediated']
+        }
 
     return monthly_data
 
@@ -846,13 +889,18 @@ def format_outstanding_cves(outstanding_cves, year, title_suffix=""):
 
 
 def format_monthly_table(monthly_stats, year, title_suffix=""):
-    """Format month-by-month CVE discovery statistics as a table"""
+    """Format month-by-month CVE discovery and remediation statistics as a table.
+    
+    Each cell shows 'discovered (remediated)' — e.g. '42 (18)' means 42 CVEs
+    were discovered that month and 18 of those have at least one errata.
+    """
     if not monthly_stats:
         print(f"\n📅 No monthly data found for {year}")
         return
 
     print(f"\n📅 Monthly New CVE Discoveries in {year}{title_suffix}")
-    print("=" * 80)
+    print("   Showing: discovered (remediated)")
+    print("=" * 92)
 
     severity_order = ['Critical', 'Important', 'Moderate', 'Low', 'Unknown']
     months = sorted(monthly_stats.keys())
@@ -860,13 +908,15 @@ def format_monthly_table(monthly_stats, year, title_suffix=""):
     # Header
     print(f"{'Month':<10}", end="")
     for sev in severity_order:
-        print(f" {sev:>10}", end="")
-    print(f" {'Total':>8}")
-    print("-" * 80)
+        print(f" {sev:>14}", end="")
+    print(f" {'Total':>14}")
+    print("-" * 92)
 
     # Rows
-    totals = {sev: 0 for sev in severity_order}
-    grand_total = 0
+    disc_totals = {sev: 0 for sev in severity_order}
+    rem_totals = {sev: 0 for sev in severity_order}
+    disc_grand = 0
+    rem_grand = 0
     for month in months:
         try:
             month_dt = datetime.strptime(month, "%Y-%m")
@@ -875,21 +925,35 @@ def format_monthly_table(monthly_stats, year, title_suffix=""):
             label = month
 
         print(f"{label:<10}", end="")
-        row_total = 0
+        row_disc = 0
+        row_rem = 0
         for sev in severity_order:
-            count = monthly_stats[month].get(sev, 0)
-            totals[sev] += count
-            row_total += count
-            print(f" {count:>10}", end="")
-        grand_total += row_total
-        print(f" {row_total:>8}")
+            entry = monthly_stats[month].get(sev, {})
+            if isinstance(entry, dict):
+                d = entry.get('discovered', 0)
+                r = entry.get('remediated', 0)
+            else:
+                d = entry
+                r = 0
+            disc_totals[sev] += d
+            rem_totals[sev] += r
+            row_disc += d
+            row_rem += r
+            cell = f"{d} ({r})"
+            print(f" {cell:>14}", end="")
+        row_cell = f"{row_disc} ({row_rem})"
+        print(f" {row_cell:>14}")
+        disc_grand += row_disc
+        rem_grand += row_rem
 
     # Totals
-    print("-" * 80)
+    print("-" * 92)
     print(f"{'Total':<10}", end="")
     for sev in severity_order:
-        print(f" {totals[sev]:>10}", end="")
-    print(f" {grand_total:>8}")
+        cell = f"{disc_totals[sev]} ({rem_totals[sev]})"
+        print(f" {cell:>14}", end="")
+    grand_cell = f"{disc_grand} ({rem_grand})"
+    print(f" {grand_cell:>14}")
 
 
 def format_cve_debug_output(cve_details, severity_counts, year):
@@ -1347,10 +1411,11 @@ def launch_web_dashboard(database_path, port=5000):
             <div class="summary-stats" id="summary-stats"></div>
             
             <div class="stat-card" style="margin-bottom: 20px;">
-                <h3>📅 Monthly New CVE Discoveries</h3>
+                <h3>📅 Monthly New CVE Discoveries &amp; Remediations</h3>
                 <div style="position: relative; height: 400px;">
                     <canvas id="monthly-severity-chart"></canvas>
                 </div>
+                <div id="monthly-table-container" style="margin-top: 15px; overflow-x: auto;"></div>
             </div>
             
             <div class="stat-card" id="monthly-product-card" style="margin-bottom: 20px; display: none;">
@@ -1875,13 +1940,42 @@ def launch_web_dashboard(database_path, port=5000):
                 'Unknown': '#6c757d'
             };
             
+            // Helper to extract count from either {discovered, remediated} dict or plain number
+            function getVal(entry, key) {
+                if (!entry) return 0;
+                if (typeof entry === 'object') return entry[key] || 0;
+                return key === 'discovered' ? entry : 0;
+            }
+            
+            // Stacked bar chart: discovered counts by severity
             const datasets = severityOrder.map(severity => ({
                 label: severity,
-                data: months.map(m => monthlyStats[m][severity] || 0),
+                data: months.map(m => getVal(monthlyStats[m][severity], 'discovered')),
                 backgroundColor: severityColors[severity],
                 borderColor: severityColors[severity],
-                borderWidth: 1
+                borderWidth: 1,
+                stack: 'discovered'
             })).filter(ds => ds.data.some(v => v > 0));
+            
+            // Add a total remediated overlay line
+            const remediatedData = months.map(m => {
+                let total = 0;
+                severityOrder.forEach(s => { total += getVal(monthlyStats[m][s], 'remediated'); });
+                return total;
+            });
+            
+            datasets.push({
+                label: 'Remediated (total)',
+                data: remediatedData,
+                type: 'line',
+                borderColor: '#198754',
+                backgroundColor: '#19875440',
+                borderWidth: 3,
+                pointRadius: 4,
+                pointBackgroundColor: '#198754',
+                fill: false,
+                tension: 0.3
+            });
             
             const canvas = document.getElementById('monthly-severity-chart');
             if (charts['monthly-severity-chart']) {
@@ -1904,6 +1998,46 @@ def launch_web_dashboard(database_path, port=5000):
                     }
                 }
             });
+            
+            // Render HTML table below the chart
+            const tableContainer = document.getElementById('monthly-table-container');
+            let html = '<table class="severity-table"><thead><tr><th>Month</th>';
+            severityOrder.forEach(s => { html += `<th style="text-align:center">${s}</th>`; });
+            html += '<th style="text-align:center">Total</th></tr></thead><tbody>';
+            
+            let discTotals = {}, remTotals = {};
+            severityOrder.forEach(s => { discTotals[s] = 0; remTotals[s] = 0; });
+            let discGrand = 0, remGrand = 0;
+            
+            months.forEach(m => {
+                const [y, mo] = m.split('-');
+                const label = new Date(y, parseInt(mo) - 1).toLocaleString('default', { month: 'short', year: 'numeric' });
+                html += `<tr><td><strong>${label}</strong></td>`;
+                let rowDisc = 0, rowRem = 0;
+                severityOrder.forEach(s => {
+                    const d = getVal(monthlyStats[m][s], 'discovered');
+                    const r = getVal(monthlyStats[m][s], 'remediated');
+                    discTotals[s] += d; remTotals[s] += r;
+                    rowDisc += d; rowRem += r;
+                    const pct = d > 0 ? Math.round(r / d * 100) : 0;
+                    const color = d > 0 ? (pct >= 80 ? '#198754' : pct >= 50 ? '#fd7e14' : '#dc3545') : '#6c757d';
+                    html += `<td class="number-cell">${d} <span style="color:${color}">(${r})</span></td>`;
+                });
+                discGrand += rowDisc; remGrand += rowRem;
+                const totalPct = rowDisc > 0 ? Math.round(rowRem / rowDisc * 100) : 0;
+                const totalColor = rowDisc > 0 ? (totalPct >= 80 ? '#198754' : totalPct >= 50 ? '#fd7e14' : '#dc3545') : '#6c757d';
+                html += `<td class="number-cell"><strong>${rowDisc}</strong> <span style="color:${totalColor}"><strong>(${rowRem})</strong></span></td></tr>`;
+            });
+            
+            html += '</tbody><tfoot><tr style="font-weight:bold;border-top:2px solid #dee2e6"><td>Total</td>';
+            severityOrder.forEach(s => {
+                html += `<td class="number-cell">${discTotals[s]} (${remTotals[s]})</td>`;
+            });
+            html += `<td class="number-cell">${discGrand} (${remGrand})</td></tr></tfoot></table>`;
+            html += '<p style="font-size:12px;color:#6c757d;margin-top:8px">Showing: discovered (remediated). ' +
+                    'Remediated = has at least one errata for the affected product. ' +
+                    'Color: <span style="color:#198754">≥80%</span> · <span style="color:#fd7e14">≥50%</span> · <span style="color:#dc3545">&lt;50%</span></p>';
+            tableContainer.innerHTML = html;
         }
         
         function displayProductMonthlyChart(monthlyByProduct, products) {
