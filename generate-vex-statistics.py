@@ -627,6 +627,99 @@ def get_outstanding_cves(conn, year, product=None, cpe=None):
     return outstanding_cves
 
 
+def get_monthly_cve_stats(conn, year, product=None, cpe=None):
+    """Get month-by-month new CVE discovery counts by severity"""
+    where_conditions = ["c.public_date LIKE ?"]
+    params = [f"{year}%"]
+
+    join_clause = ""
+    if product or cpe:
+        join_clause = "INNER JOIN affects a ON c.cve = a.cve"
+        where_conditions.extend(["a.product IS NOT NULL", "a.product != ''"])
+        if product:
+            where_conditions.append("a.product LIKE ?")
+            params.append(f"%{product}%")
+        if cpe:
+            where_conditions.append("a.cpe LIKE ?")
+            params.append(f"%{cpe}%")
+
+    query = f"""
+    SELECT
+        substr(c.public_date, 1, 7) as month,
+        c.severity,
+        COUNT(DISTINCT c.cve) as count
+    FROM cve c
+    {join_clause}
+    WHERE {' AND '.join(where_conditions)}
+    GROUP BY month, c.severity
+    ORDER BY month, c.severity
+    """
+
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    results = cursor.fetchall()
+
+    monthly_data = {}
+    for row in results:
+        month = row['month']
+        severity = row['severity'] or 'Unknown'
+        count = row['count']
+        if month not in monthly_data:
+            monthly_data[month] = {}
+        monthly_data[month][severity] = count
+
+    return monthly_data
+
+
+def get_monthly_cve_by_product(conn, year, top_n=10):
+    """Get month-by-month new CVE counts for the top N products"""
+    top_query = """
+    SELECT a.product, COUNT(DISTINCT c.cve) as total
+    FROM cve c
+    INNER JOIN affects a ON c.cve = a.cve
+    WHERE c.public_date LIKE ?
+      AND a.product IS NOT NULL AND a.product != ''
+    GROUP BY a.product
+    ORDER BY total DESC
+    LIMIT ?
+    """
+
+    cursor = conn.cursor()
+    cursor.execute(top_query, [f"{year}%", top_n])
+    top_products = [row['product'] for row in cursor.fetchall()]
+
+    if not top_products:
+        return {}, []
+
+    placeholders = ','.join(['?' for _ in top_products])
+    monthly_query = f"""
+    SELECT
+        substr(c.public_date, 1, 7) as month,
+        a.product,
+        COUNT(DISTINCT c.cve) as count
+    FROM cve c
+    INNER JOIN affects a ON c.cve = a.cve
+    WHERE c.public_date LIKE ?
+      AND a.product IN ({placeholders})
+    GROUP BY month, a.product
+    ORDER BY month, a.product
+    """
+
+    cursor.execute(monthly_query, [f"{year}%"] + top_products)
+    results = cursor.fetchall()
+
+    monthly_data = {}
+    for row in results:
+        month = row['month']
+        product_name = row['product']
+        count = row['count']
+        if month not in monthly_data:
+            monthly_data[month] = {}
+        monthly_data[month][product_name] = count
+
+    return monthly_data, top_products
+
+
 def format_severity_table(severity_counts, title, risk_stats=None):
     """Format severity statistics as a table with optional days of risk data"""
     print(f"\n📊 {title}")
@@ -752,6 +845,53 @@ def format_outstanding_cves(outstanding_cves, year, title_suffix=""):
     print(f"Total outstanding CVEs: {len(outstanding_cves)}")
 
 
+def format_monthly_table(monthly_stats, year, title_suffix=""):
+    """Format month-by-month CVE discovery statistics as a table"""
+    if not monthly_stats:
+        print(f"\n📅 No monthly data found for {year}")
+        return
+
+    print(f"\n📅 Monthly New CVE Discoveries in {year}{title_suffix}")
+    print("=" * 80)
+
+    severity_order = ['Critical', 'Important', 'Moderate', 'Low', 'Unknown']
+    months = sorted(monthly_stats.keys())
+
+    # Header
+    print(f"{'Month':<10}", end="")
+    for sev in severity_order:
+        print(f" {sev:>10}", end="")
+    print(f" {'Total':>8}")
+    print("-" * 80)
+
+    # Rows
+    totals = {sev: 0 for sev in severity_order}
+    grand_total = 0
+    for month in months:
+        try:
+            month_dt = datetime.strptime(month, "%Y-%m")
+            label = month_dt.strftime("%b %Y")
+        except ValueError:
+            label = month
+
+        print(f"{label:<10}", end="")
+        row_total = 0
+        for sev in severity_order:
+            count = monthly_stats[month].get(sev, 0)
+            totals[sev] += count
+            row_total += count
+            print(f" {count:>10}", end="")
+        grand_total += row_total
+        print(f" {row_total:>8}")
+
+    # Totals
+    print("-" * 80)
+    print(f"{'Total':<10}", end="")
+    for sev in severity_order:
+        print(f" {totals[sev]:>10}", end="")
+    print(f" {grand_total:>8}")
+
+
 def format_cve_debug_output(cve_details, severity_counts, year):
     """Format detailed CVE information for debug mode"""
     severity_order = ['Critical', 'Important', 'Moderate', 'Low', 'Unknown']
@@ -875,7 +1015,15 @@ def get_statistics_data(conn, year, product=None, cpe=None):
     
     # Get outstanding CVEs
     outstanding_cves = get_outstanding_cves(conn, year, product, cpe)
-    
+
+    # Get monthly statistics
+    monthly_stats = get_monthly_cve_stats(conn, year, product, cpe)
+
+    monthly_by_product = {}
+    monthly_products = []
+    if not product and not cpe:
+        monthly_by_product, monthly_products = get_monthly_cve_by_product(conn, year, 10)
+
     # Calculate summary
     total_cves = product_total + no_product_total
     unique_cwes = get_total_unique_cwes_count(conn, year, product, cpe)
@@ -898,6 +1046,9 @@ def get_statistics_data(conn, year, product=None, cpe=None):
         'errata_severity_counts': errata_severity_counts,
         'top_cwes': top_cwes,
         'outstanding_cves': outstanding_cves,
+        'monthly_stats': monthly_stats,
+        'monthly_by_product': monthly_by_product,
+        'monthly_products': monthly_products,
         'summary': {
             'total_cves': total_cves,
             'product_total': product_total,
@@ -1194,6 +1345,20 @@ def launch_web_dashboard(database_path, port=5000):
         
         <div id="content" style="display: none;">
             <div class="summary-stats" id="summary-stats"></div>
+            
+            <div class="stat-card" style="margin-bottom: 20px;">
+                <h3>📅 Monthly New CVE Discoveries</h3>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="monthly-severity-chart"></canvas>
+                </div>
+            </div>
+            
+            <div class="stat-card" id="monthly-product-card" style="margin-bottom: 20px; display: none;">
+                <h3>📅 Monthly New CVEs by Product (Top 10)</h3>
+                <div style="position: relative; height: 400px;">
+                    <canvas id="monthly-product-chart"></canvas>
+                </div>
+            </div>
             
             <div class="stats-grid">
                 <div class="stat-card">
@@ -1518,6 +1683,13 @@ def launch_web_dashboard(database_path, port=5000):
         
         function displayData(data) {
             displaySummaryStats(data.summary);
+            displayMonthlyChart(data.monthly_stats);
+            if (data.monthly_by_product && Object.keys(data.monthly_by_product).length > 0) {
+                displayProductMonthlyChart(data.monthly_by_product, data.monthly_products);
+                document.getElementById('monthly-product-card').style.display = 'block';
+            } else {
+                document.getElementById('monthly-product-card').style.display = 'none';
+            }
             createChart('affecting-chart', 'doughnut', data.product_severity_counts, 'CVEs Affecting Products');
             displaySeverityDetails(data.product_severity_counts, data.risk_stats);
             createChart('cwe-chart', 'bar', Object.fromEntries(data.top_cwes), 'Top CWEs', true);
@@ -1684,6 +1856,104 @@ def launch_web_dashboard(database_path, port=5000):
             charts[canvasId] = new Chart(ctx, config);
         }
         
+        function displayMonthlyChart(monthlyStats) {
+            if (!monthlyStats || Object.keys(monthlyStats).length === 0) return;
+            
+            const months = Object.keys(monthlyStats).sort();
+            const monthLabels = months.map(m => {
+                const [y, mo] = m.split('-');
+                const d = new Date(y, parseInt(mo) - 1);
+                return d.toLocaleString('default', { month: 'short' });
+            });
+            
+            const severityOrder = ['Critical', 'Important', 'Moderate', 'Low', 'Unknown'];
+            const severityColors = {
+                'Critical': '#dc3545',
+                'Important': '#fd7e14',
+                'Moderate': '#ffc107',
+                'Low': '#28a745',
+                'Unknown': '#6c757d'
+            };
+            
+            const datasets = severityOrder.map(severity => ({
+                label: severity,
+                data: months.map(m => monthlyStats[m][severity] || 0),
+                backgroundColor: severityColors[severity],
+                borderColor: severityColors[severity],
+                borderWidth: 1
+            })).filter(ds => ds.data.some(v => v > 0));
+            
+            const canvas = document.getElementById('monthly-severity-chart');
+            if (charts['monthly-severity-chart']) {
+                charts['monthly-severity-chart'].destroy();
+            }
+            
+            charts['monthly-severity-chart'] = new Chart(canvas.getContext('2d'), {
+                type: 'bar',
+                data: { labels: monthLabels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: false },
+                        legend: { display: true, position: 'top' }
+                    },
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true, title: { display: true, text: 'CVE Count' } }
+                    }
+                }
+            });
+        }
+        
+        function displayProductMonthlyChart(monthlyByProduct, products) {
+            if (!monthlyByProduct || Object.keys(monthlyByProduct).length === 0) return;
+            
+            const months = Object.keys(monthlyByProduct).sort();
+            const monthLabels = months.map(m => {
+                const [y, mo] = m.split('-');
+                const d = new Date(y, parseInt(mo) - 1);
+                return d.toLocaleString('default', { month: 'short' });
+            });
+            
+            const palette = [
+                '#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4',
+                '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990'
+            ];
+            
+            const datasets = products.map((product, i) => ({
+                label: product.length > 35 ? product.substring(0, 32) + '...' : product,
+                data: months.map(m => (monthlyByProduct[m] || {})[product] || 0),
+                borderColor: palette[i % palette.length],
+                backgroundColor: palette[i % palette.length] + '20',
+                fill: false,
+                tension: 0.3,
+                borderWidth: 2,
+                pointRadius: 3
+            }));
+            
+            const canvas = document.getElementById('monthly-product-chart');
+            if (charts['monthly-product-chart']) {
+                charts['monthly-product-chart'].destroy();
+            }
+            
+            charts['monthly-product-chart'] = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: { labels: monthLabels, datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: { display: false },
+                        legend: { display: true, position: 'right' }
+                    },
+                    scales: {
+                        y: { beginAtZero: true, title: { display: true, text: 'CVE Count' } }
+                    }
+                }
+            });
+        }
+        
         function toggleOutstanding() {
             const section = document.getElementById('outstanding-section');
             showingOutstanding = !showingOutstanding;
@@ -1801,6 +2071,8 @@ Examples:
   %(prog)s --year 2024 --cpe "cpe:/o:redhat:enterprise_linux" # Filter by CPE identifier
   %(prog)s --year 2024 --outstanding                          # Show outstanding unfixed CVEs
   %(prog)s --year 2024 --product "RHEL" --outstanding         # Show outstanding CVEs for specific product
+  %(prog)s --year 2024 --monthly                              # Show month-by-month CVE discovery stats
+  %(prog)s --year 2024 --product "RHEL" --monthly             # Monthly stats for a specific product
   %(prog)s --interactive                                      # Launch web dashboard (requires Flask)
   %(prog)s --interactive --port 8080                          # Launch web dashboard on custom port
         """,
@@ -1839,6 +2111,12 @@ Examples:
         '--outstanding',
         action='store_true',
         help='Show outstanding (unfixed) Critical, Important, and Moderate (CVSS ≥ 7.0) CVEs that affect products'
+    )
+
+    parser.add_argument(
+        '--monthly',
+        action='store_true',
+        help='Show month-by-month new CVE discovery statistics'
     )
 
     parser.add_argument(
@@ -1943,6 +2221,11 @@ Examples:
         if args.outstanding:
             outstanding_cves = get_outstanding_cves(conn, args.year, args.product, args.cpe)
             format_outstanding_cves(outstanding_cves, args.year, title_suffix)
+
+        # Monthly statistics - only show when requested
+        if args.monthly:
+            monthly_stats = get_monthly_cve_stats(conn, args.year, args.product, args.cpe)
+            format_monthly_table(monthly_stats, args.year, title_suffix)
 
         # Summary
         total_cves = product_total + no_product_total
